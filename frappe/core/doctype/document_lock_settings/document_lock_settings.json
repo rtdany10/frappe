@@ -1,0 +1,87 @@
+{
+ "actions": [],
+ "creation": "2023-10-30 18:53:15.142263",
+ "default_view": "List",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "section_break_yqgx",
+  "apply_on",
+  "documents",
+  "column_break_rrma",
+  "unlock_role",
+  "allow_owners_to_unlock"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "section_break_yqgx",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "All DocType",
+   "fieldname": "apply_on",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Apply On",
+   "options": "All DocType\nSelected DocType",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_rrma",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval: doc.apply_on == \"Selected DocType\"",
+   "fieldname": "documents",
+   "fieldtype": "Table",
+   "label": "Documents",
+   "mandatory_depends_on": "eval: doc.apply_on == \"Selected DocType\"",
+   "options": "Document Lock Details"
+  },
+  {
+   "description": "Users with this role can unlock documents locked by others",
+   "fieldname": "unlock_role",
+   "fieldtype": "Link",
+   "label": "Unlock Role",
+   "options": "Role"
+  },
+  {
+   "default": "0",
+   "description": "Owner of the document will be allowed to unlock even if locked by someone else",
+   "fieldname": "allow_owners_to_unlock",
+   "fieldtype": "Check",
+   "label": "Allow owners to unlock"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2023-10-30 19:14:33.007683",
+ "modified_by": "Administrator",
+ "module": "Core",
+ "name": "Document Lock Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -444,7 +444,20 @@ frappe.ui.form.Toolbar = class Toolbar {
 				condition: () => !this.frm.is_new(),
 			}
 		);
-		//
+
+		this.page.add_menu_item(
+			__("Lock/Unlock Document"),
+			() => {
+				let reminder_maanger = new DocumentLock({ frm: this.frm });
+				reminder_maanger.setup_document_lock();
+			},
+			true,
+			{
+				shortcut: "Shift+L",
+				condition: () => !this.frm.is_new(),
+			}
+		);
+
 		// Undo and redo
 		this.page.add_menu_item(
 			__("Undo"),
