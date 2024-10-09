@@ -2,6 +2,7 @@ import hashlib
 import mimetypes
 import os
 import re
+from binascii import Error as BinasciiError
 from io import BytesIO
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import unquote
@@ -215,9 +216,11 @@ def get_file_name(fname: str, optional_suffix: str | None = None) -> str:
 	return f"{partial}{suffix}{extn}"
 
 
-def extract_images_from_doc(doc: "Document", fieldname: str):
+def extract_images_from_doc(doc: "Document", fieldname: str, is_private=True):
 	content = doc.get(fieldname)
-	content = extract_images_from_html(doc, content, is_private=(not doc.meta.make_attachments_public))
+	if doc.meta.make_attachments_public:
+		is_private = False
+	content = extract_images_from_html(doc, content, is_private=is_private)
 	if frappe.flags.has_dataurl:
 		doc.set(fieldname, content)
 
@@ -234,7 +237,12 @@ def extract_images_from_html(doc: "Document", content: str, is_private: bool = F
 			content = content.encode("utf-8")
 		if b"," in content:
 			content = content.split(b",")[1]
-		content = safe_b64decode(content)
+
+		try:
+			content = safe_b64decode(content)
+		except BinasciiError:
+			frappe.flags.has_dataurl = True
+			return f'<img src="#broken-image" alt="{get_corrupted_image_msg()}"'
 
 		if "filename=" in headers:
 			filename = headers.split("filename=")[-1]
@@ -271,6 +279,10 @@ def extract_images_from_html(doc: "Document", content: str, is_private: bool = F
 		content = re.sub(r'<img[^>]*src\s*=\s*["\'](?=data:)(.*?)["\']', _save_file, content)
 
 	return content
+
+
+def get_corrupted_image_msg():
+	return _("Image: Corrupted Data Stream")
 
 
 def get_random_filename(content_type: str | None = None) -> str:
