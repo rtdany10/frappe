@@ -146,6 +146,9 @@ class BaseDocument:
 		if hasattr(self, "__setup__"):
 			self.__setup__()
 
+	def __json__(self):
+		return self.as_dict(no_nulls=True)
+
 	@cached_property
 	def meta(self):
 		return frappe.get_meta(self.doctype)
@@ -365,6 +368,8 @@ class BaseDocument:
 	def get_valid_dict(
 		self, sanitize=True, convert_dates_to_str=False, ignore_nulls=False, ignore_virtual=False
 	) -> _dict:
+		from frappe.model.document import DocRef
+
 		d = _dict()
 		field_values = self.__dict__
 
@@ -430,6 +435,9 @@ class BaseDocument:
 					value = df.default
 				else:
 					value = get_not_null_defaults(df.fieldtype)
+
+			if hasattr(value, "__value__"):
+				value = value.__value__()
 
 			d[fieldname] = value
 

@@ -43,6 +43,7 @@ from frappe.utils.data import cint, cstr, sbool
 
 # Local application imports
 from .exceptions import *
+from .types.frappedict import _dict
 from .utils.jinja import (
 	get_email_from_template,
 	get_jenv,
@@ -53,6 +54,35 @@ from .utils.jinja import (
 
 __version__ = "16.0.0-dev"
 __title__ = "Frappe Framework"
+
+# This if block is never executed when running the code. It is only used for
+# telling static code analyzer where to find dynamically defined attributes.
+if TYPE_CHECKING:  # pragma: no cover
+	from werkzeug.wrappers import Request
+
+	from frappe.database.mariadb.database import MariaDBDatabase
+	from frappe.database.postgres.database import PostgresDatabase
+	from frappe.email.doctype.email_queue.email_queue import EmailQueue
+	from frappe.model.document import Document
+	from frappe.query_builder.builder import MariaDB, Postgres
+	from frappe.utils.redis_wrapper import RedisWrapper
+
+	db: MariaDBDatabase | PostgresDatabase
+	qb: MariaDB | Postgres
+	cache: RedisWrapper
+	response: _dict
+	conf: _dict
+	form_dict: _dict
+	flags: _dict
+	request: Request
+	session: _dict
+	user: str
+	flags: _dict
+	lang: str
+
+
+# end: static analysis hack
+
 
 controllers = {}
 local = Local()
@@ -66,28 +96,6 @@ _tune_gc = bool(sbool(os.environ.get("FRAPPE_TUNE_GC", True)))
 if _dev_server:
 	warnings.simplefilter("always", DeprecationWarning)
 	warnings.simplefilter("always", PendingDeprecationWarning)
-
-
-class _dict(dict):
-	"""dict like object that exposes keys as attributes"""
-
-	__slots__ = ()
-	__getattr__ = dict.get
-	__setattr__ = dict.__setitem__
-	__delattr__ = dict.__delitem__
-	__setstate__ = dict.update
-
-	def __getstate__(self):
-		return self
-
-	def update(self, *args, **kwargs):
-		"""update and return self -- the missing dict feature in python"""
-
-		super().update(*args, **kwargs)
-		return self
-
-	def copy(self):
-		return _dict(self)
 
 
 def _(msg: str, lang: str | None = None, context: str | None = None) -> str:
@@ -138,45 +146,9 @@ def _lt(msg: str, lang: str | None = None, context: str | None = None):
 
 	Note: Result is not guaranteed to equivalent to pure strings for all operations.
 	"""
+	from .types.lazytranslatedstring import _LazyTranslate
+
 	return _LazyTranslate(msg, lang, context)
-
-
-@functools.total_ordering
-class _LazyTranslate:
-	__slots__ = ("msg", "lang", "context")
-
-	def __init__(self, msg: str, lang: str | None = None, context: str | None = None) -> None:
-		self.msg = msg
-		self.lang = lang
-		self.context = context
-
-	@property
-	def value(self) -> str:
-		return _(str(self.msg), self.lang, self.context)
-
-	def __str__(self):
-		return self.value
-
-	def __add__(self, other):
-		if isinstance(other, str | _LazyTranslate):
-			return self.value + str(other)
-		raise NotImplementedError
-
-	def __radd__(self, other):
-		if isinstance(other, str | _LazyTranslate):
-			return str(other) + self.value
-		return NotImplementedError
-
-	def __repr__(self) -> str:
-		return f"'{self.value}'"
-
-	# NOTE: it's required to override these methods and raise error as default behaviour will
-	# return `False` in all cases.
-	def __eq__(self, other):
-		raise NotImplementedError
-
-	def __lt__(self, other):
-		raise NotImplementedError
 
 
 def as_unicode(text, encoding: str = "utf-8") -> str:
@@ -216,34 +188,6 @@ debug_log = local("debug_log")
 message_log = local("message_log")
 
 lang = local("lang")
-
-# This if block is never executed when running the code. It is only used for
-# telling static code analyzer where to find dynamically defined attributes.
-if TYPE_CHECKING:  # pragma: no cover
-	from werkzeug.wrappers import Request
-
-	from frappe.database.mariadb.database import MariaDBDatabase
-	from frappe.database.postgres.database import PostgresDatabase
-	from frappe.email.doctype.email_queue.email_queue import EmailQueue
-	from frappe.model.document import Document
-	from frappe.query_builder.builder import MariaDB, Postgres
-	from frappe.utils.redis_wrapper import RedisWrapper
-
-	db: MariaDBDatabase | PostgresDatabase
-	qb: MariaDB | Postgres
-	cache: RedisWrapper
-	response: _dict
-	conf: _dict
-	form_dict: _dict
-	flags: _dict
-	request: Request
-	session: _dict
-	user: str
-	flags: _dict
-	lang: str
-
-
-# end: static analysis hack
 
 
 def init(site: str, sites_path: str = ".", new_site: bool = False, force=False) -> None:
@@ -425,13 +369,16 @@ def get_site_config(sites_path: str | None = None, site_path: str | None = None)
 
 	# Generalized env variable overrides and defaults
 	def db_default_ports(db_type):
-		from frappe.database.mariadb.database import MariaDBDatabase
-		from frappe.database.postgres.database import PostgresDatabase
+		if db_type == "mariadb":
+			from frappe.database.mariadb.database import MariaDBDatabase
 
-		return {
-			"mariadb": MariaDBDatabase.default_port,
-			"postgres": PostgresDatabase.default_port,
-		}[db_type]
+			return MariaDBDatabase.default_port
+		elif db_type == "postgres":
+			from frappe.database.postgres.database import PostgresDatabase
+
+			return PostgresDatabase.default_port
+
+		raise ValueError(f"Unsupported db_type={db_type}")
 
 	config["redis_queue"] = (
 		os.environ.get("FRAPPE_REDIS_QUEUE") or config.get("redis_queue") or "redis://127.0.0.1:11311"
@@ -1932,6 +1879,9 @@ def import_doc(path):
 def copy_doc(doc: "Document", ignore_no_copy: bool = True) -> "Document":
 	"""No_copy fields also get copied."""
 	import copy
+	from types import MappingProxyType
+
+	from frappe.model.base_document import BaseDocument
 
 	def remove_no_copy_fields(d):
 		for df in d.meta.get("fields", {"no_copy": 1}):
@@ -1943,8 +1893,10 @@ def copy_doc(doc: "Document", ignore_no_copy: bool = True) -> "Document":
 	if not local.flags.in_test:
 		fields_to_clear.append("docstatus")
 
-	if not isinstance(doc, dict):
+	if isinstance(doc, BaseDocument) or hasattr(doc, "as_dict"):
 		d = doc.as_dict()
+	elif isinstance(doc, MappingProxyType):  # global test record
+		d = dict(doc)
 	else:
 		d = doc
 
@@ -2168,18 +2120,7 @@ def are_emails_muted():
 	return flags.mute_emails or cint(conf.get("mute_emails"))
 
 
-def get_test_records(doctype):
-	"""Return list of objects from `test_records.json` in the given doctype's folder."""
-	from frappe.modules import get_doctype_module, get_module_path
-
-	path = os.path.join(
-		get_module_path(get_doctype_module(doctype)), "doctype", scrub(doctype), "test_records.json"
-	)
-	if os.path.exists(path):
-		with open(path) as f:
-			return json.loads(f.read())
-	else:
-		return []
+from frappe.deprecation_dumpster import frappe_get_test_records as get_test_records
 
 
 def format_value(*args, **kwargs):

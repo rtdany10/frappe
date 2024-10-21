@@ -6,6 +6,7 @@ import time
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from functools import singledispatchmethod, wraps
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Optional, TypeAlias, Union, overload
 
 from werkzeug.exceptions import NotFound
@@ -35,6 +36,27 @@ if TYPE_CHECKING:
 
 DOCUMENT_LOCK_EXPIRTY = 12 * 60 * 60  # All locks expire in 12 hours automatically
 DOCUMENT_LOCK_SOFT_EXPIRY = 60 * 60  # Let users force-unlock after 60 minutes
+
+
+class DocRef:
+	"""A lightweight reference to a document, containing just the doctype and name."""
+
+	def __init__(self, doctype: str, name: str):
+		self.doctype = doctype
+		self.name = name
+
+	def __value__(self):
+		# Used when requiring its value representation for db interactions, serializations, etc
+		return self.name
+
+	def __hash__(self):
+		return hash(self.doctype + self.name or "")
+
+	def __str__(self):
+		return f"{self.doctype} ({self.name or 'n/a'})"
+
+	def __repr__(self):
+		return f"<{self.__class__.__name__}: doctype={self.doctype} name={self.name or 'n/a'}>"
 
 
 @simple_singledispatch
@@ -76,6 +98,11 @@ def _basedoc(doc: BaseDocument, *args, **kwargs) -> "Document":
 	return doc
 
 
+@get_doc.register(DocRef)
+def _docref(doc_ref: DocRef, **kwargs) -> "Document":
+	return get_doc(doc_ref.doctype, doc_ref.name, **kwargs)
+
+
 @get_doc.register(str)
 def get_doc_str(doctype: str, name: str | None = None, **kwargs) -> "Document":
 	# if no name: it's a single
@@ -84,6 +111,11 @@ def get_doc_str(doctype: str, name: str | None = None, **kwargs) -> "Document":
 		return controller(doctype, name, **kwargs)
 
 	raise ImportError(doctype)
+
+
+@get_doc.register(MappingProxyType)  # global test record
+def get_doc_from_mapping_proxy(data: MappingProxyType, **kwargs) -> "Document":
+	return get_doc_from_dict(dict(data), **kwargs)
 
 
 @get_doc.register(dict)
@@ -151,7 +183,7 @@ def read_only_document(context=None):
 			del frappe.local.read_only_depth
 
 
-class Document(BaseDocument):
+class Document(BaseDocument, DocRef):
 	"""All controllers inherit from `Document`."""
 
 	doctype: DF.Data
@@ -166,7 +198,7 @@ class Document(BaseDocument):
 	def __init__(self, *args, **kwargs):
 		"""Constructor.
 
-		:param arg1: DocType name as string or document **dict**
+		:param arg1: DocType name as string, document **dict**, or DocRef object
 		:param arg2: Document name, if `arg1` is DocType name.
 
 		If DocType name and document name are passed, the object will load
@@ -207,6 +239,10 @@ class Document(BaseDocument):
 		# use doctype as name for single
 		name = doctype if not args else args[0]
 		self._init_known_doc(doctype, name, **kwargs)
+
+	@_init_dispatch.register(DocRef)
+	def _init_docref(self, doc_ref, **kwargs):
+		self._init_known_doc(doc_ref.doctype, doc_ref.name, **kwargs)
 
 	@_init_dispatch.register(dict)
 	def _init_dict(self, arg_dict, **kwargs):
@@ -249,6 +285,15 @@ class Document(BaseDocument):
 			super().__init__(d)
 		self.flags.pop("ignore_children", None)
 
+		self.load_children_from_db()
+
+		# sometimes __setup__ can depend on child values, hence calling again at the end
+		if hasattr(self, "__setup__"):
+			self.__setup__()
+
+		return self
+
+	def load_children_from_db(self):
 		for df in self._get_table_fields():
 			# Make sure not to query the DB for a child table, if it is a virtual one.
 			# During frappe is installed, the property "is_virtual" is not available in tabDocType, so
@@ -270,10 +315,6 @@ class Document(BaseDocument):
 			)
 
 			self.set(df.fieldname, children)
-
-		# sometimes __setup__ can depend on child values, hence calling again at the end
-		if hasattr(self, "__setup__"):
-			self.__setup__()
 
 		return self
 
@@ -1756,20 +1797,16 @@ class Document(BaseDocument):
 		doc = self.get_valid_dict(convert_dates_to_str=True, ignore_virtual=True)
 		deferred_insert(doctype=self.doctype, records=doc)
 
-	def __repr__(self):
-		name = self.name or "unsaved"
-		doctype = self.__class__.__name__
+	def __str__(self):
+		return f"{self.doctype} ({self.name or 'unsaved'})"
 
+	def __repr__(self):
+		doctype = f"doctype={self.doctype}"
+		name = self.name or "unsaved"
 		docstatus = f" docstatus={self.docstatus}" if self.docstatus else ""
 		parent = f" parent={self.parent}" if getattr(self, "parent", None) else ""
 
-		return f"<{doctype}: {name}{docstatus}{parent}>"
-
-	def __str__(self):
-		name = self.name or "unsaved"
-		doctype = self.__class__.__name__
-
-		return f"{doctype}({name})"
+		return f"<{self.__class__.__name__}: {doctype} {name}{docstatus}{parent}>"
 
 
 def execute_action(__doctype, __name, __action, **kwargs):

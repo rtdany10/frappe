@@ -346,9 +346,9 @@ def test_runner_print_mandatory_fields(*args, **kwargs):
 	"no public api anymore",
 )
 def test_runner_get_test_record_log(doctype):
-	from frappe.tests.utils.generators import TestRecordLog
+	from frappe.tests.utils.generators import TestRecordManager
 
-	return TestRecordLog().get(doctype)
+	return TestRecordManager().get(doctype)
 
 
 @deprecated(
@@ -358,9 +358,9 @@ def test_runner_get_test_record_log(doctype):
 	"no public api anymore",
 )
 def test_runner_add_to_test_record_log(doctype):
-	from frappe.tests.utils.generators import TestRecordLog
+	from frappe.tests.utils.generators import TestRecordManager
 
-	return TestRecordLog().add(doctype)
+	return TestRecordManager().add(doctype)
 
 
 @deprecated(
@@ -475,40 +475,61 @@ def tests_timeout(*args, **kwargs):
 	return timeout(*args, **kwargs)
 
 
-@deprecated(
-	"frappe.tests.utils.FrappeTestCase",
-	"2024-20-08",
-	"v17",
-	"use `frappe.tests.UnitTestCase` or `frappe.tests.IntegrationTestCase` respectively",
-)
-def tests_FrappeTestCase(*args, **kwargs):
-	from frappe.tests import IntegrationTestCase
+def get_tests_FrappeTestCase():
+	class CompatFrappeTestCase:
+		def __new__(cls, *args, **kwargs):
+			from frappe.tests import IntegrationTestCase
 
-	return IntegrationTestCase(*args, **kwargs)
+			class _CompatFrappeTestCase(IntegrationTestCase):
+				def __init__(self, *args, **kwargs):
+					deprecation_warning(
+						"2024-20-08",
+						"v17",
+						"Import `frappe.tests.UnitTestCase` or `frappe.tests.IntegrationTestCase` respectively instead of `frappe.tests.utils.FrappeTestCase`",
+					)
+					super().__init__(*args, **kwargs)
 
+			return _CompatFrappeTestCase(*args, **kwargs)
 
-@deprecated(
-	"frappe.tests.utils.IntegrationTestCase",
-	"2024-20-08",
-	"v17",
-	"use `frappe.tests.IntegrationTestCase`",
-)
-def tests_IntegrationTestCase(*args, **kwargs):
-	from frappe.tests import IntegrationTestCase
-
-	return IntegrationTestCase(*args, **kwargs)
+	return CompatFrappeTestCase
 
 
-@deprecated(
-	"frappe.tests.utils.UnitTestCase",
-	"2024-20-08",
-	"v17",
-	"use `frappe.tests.UnitTestCase`",
-)
-def tests_UnitTestCase(*args, **kwargs):
-	from frappe.tests import UnitTestCase
+def get_tests_IntegrationTestCase():
+	class CompatIntegrationTestCase:
+		def __new__(cls, *args, **kwargs):
+			from frappe.tests import IntegrationTestCase
 
-	return UnitTestCase(*args, **kwargs)
+			class _CompatIntegrationTestCase(IntegrationTestCase):
+				def __init__(self, *args, **kwargs):
+					deprecation_warning(
+						"2024-20-08",
+						"v17",
+						"Import `frappe.tests.IntegrationTestCase` instead of `frappe.tests.utils.IntegrationTestCase`",
+					)
+					super().__init__(*args, **kwargs)
+
+			return _CompatIntegrationTestCase(*args, **kwargs)
+
+	return CompatIntegrationTestCase
+
+
+def get_tests_UnitTestCase():
+	class CompatUnitTestCase:
+		def __new__(cls, *args, **kwargs):
+			from frappe.tests import UnitTestCase
+
+			class _CompatUnitTestCase(UnitTestCase):
+				def __init__(self, *args, **kwargs):
+					deprecation_warning(
+						"2024-20-08",
+						"v17",
+						"Import `frappe.tests.UnitTestCase` instead of `frappe.tests.utils.UnitTestCase`",
+					)
+					super().__init__(*args, **kwargs)
+
+			return _CompatUnitTestCase(*args, **kwargs)
+
+	return CompatUnitTestCase
 
 
 @deprecated(
@@ -566,3 +587,29 @@ def tests_utils_get_dependencies(doctype):
 )
 def test_runner_get_dependencies(doctype):
 	return tests_utils_get_dependencies(doctype)
+
+
+@deprecated(
+	"frappe.get_test_records",
+	"2024-20-09",
+	"v17",
+	"""Please access the global test records pool via cls.globalTestRecords['Some Doc'] -> list.
+If not an IntegrationTestCase, use frappe.tests.utils.load_test_records_for (check return type).
+""",
+)
+def frappe_get_test_records(doctype):
+	import frappe
+	from frappe.tests.utils.generators import load_test_records_for
+
+	frappe.flags.deprecation_dumpster_invoked = True
+
+	records = load_test_records_for(doctype)
+	if isinstance(records, dict):
+		_records = []
+		for doctype, docs in records.items():
+			for doc in docs:
+				_doc = doc.copy()
+				_doc["doctype"] = doctype
+				_records.append(_doc)
+		return _records
+	return records
