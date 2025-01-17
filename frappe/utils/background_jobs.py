@@ -172,7 +172,7 @@ def enqueue(
 		return q.enqueue_call(
 			"frappe.utils.background_jobs.execute_job",
 			on_success=Callback(func=on_success) if on_success else None,
-			on_failure=Callback(func=on_failure) if on_failure else None,
+			on_failure=Callback(func=on_failure),
 			timeout=timeout,
 			kwargs=queue_args,
 			at_front=at_front,
@@ -254,6 +254,7 @@ def execute_job(site, method, event, job_name, kwargs, user=None, is_async=True,
 			# 1213 = deadlock
 			# 1205 = lock wait timeout
 			# or RetryBackgroundJobError is explicitly raised
+			frappe.job.after_job.reset()
 			frappe.destroy()
 			time.sleep(retry + 1)
 
@@ -276,6 +277,9 @@ def execute_job(site, method, event, job_name, kwargs, user=None, is_async=True,
 		return retval
 
 	finally:
+		if not hasattr(frappe.local, "site"):
+			frappe.init(site)
+			frappe.connect()
 		for after_job_task in frappe.get_hooks("after_job"):
 			frappe.call(after_job_task, method=method_name, kwargs=kwargs, result=retval)
 		frappe.local.job.after_job.run()
@@ -298,7 +302,6 @@ def start_worker(
 		strategy = DequeueStrategy.DEFAULT
 
 	_start_sentry()
-	_freeze_gc()
 
 	with frappe.init_site():
 		# empty init is required to get redis_queue from common_site_config.json
@@ -343,6 +346,26 @@ class FrappeWorker(Worker):
 
 		Thread(target=start_scheduler, daemon=True).start()
 
+	def subscribe(self):
+		"""Subscribe to this worker's channel"""
+		# This function is overridden to increase the timeout of pubsub thread. Default is 0.2
+		# second which is too frequent for us, this change sets it to 2s which is 10x the default.
+		# ref: https://github.com/frappe/caffeine/issues/46
+
+		# The pubsub thread is responsible for handling three commands from master process:
+		# 1. shutdown
+		# 2. stop current job
+		# 3. Kill forked horse (~ force stop the job)
+
+		# Impact of increasing timeout: shutdown might have up to 2s before background thread
+		# times out and is joined with main thread. Ideally, we should not have to do this at all.
+		# But the code that handles blocking socket behaviour is deep inside redis-py/hiredis.
+
+		self.log.info("Subscribing to channel %s", self.pubsub_channel_name)
+		self.pubsub = self.connection.pubsub()
+		self.pubsub.subscribe(**{self.pubsub_channel_name: self.handle_payload})
+		self.pubsub_thread = self.pubsub.run_in_thread(sleep_time=2, daemon=True)
+
 
 def start_worker_pool(
 	queue: str | None = None,
@@ -365,10 +388,7 @@ def start_worker_pool(
 	import frappe.utils.scheduler
 	import frappe.utils.typing_validations  # any whitelisted method uses this
 	import frappe.website.path_resolver  # all the page types and resolver
-
 	# end: module pre-loading
-
-	_freeze_gc()
 
 	with frappe.init_site():
 		redis_connection = get_redis_conn()
@@ -392,12 +412,6 @@ def start_worker_pool(
 		worker_class=FrappeWorker,  # Auto starts scheduler with workerpool
 	)
 	pool.start(logging_level=logging_level, burst=burst)
-
-
-def _freeze_gc():
-	if frappe._tune_gc:
-		gc.collect()
-		gc.freeze()
 
 
 def get_worker_name(queue):
@@ -507,19 +521,20 @@ def get_redis_conn(username=None, password=None):
 	if not hasattr(frappe.local, "conf"):
 		raise Exception("You need to call frappe.init")
 
-	elif not frappe.local.conf.redis_queue:
+	conf = frappe.get_site_config()
+	if not conf.redis_queue:
 		raise Exception("redis_queue missing in common_site_config.json")
 
 	global _redis_queue_conn
 
 	cred = frappe._dict()
-	if frappe.conf.get("use_rq_auth"):
+	if conf.get("use_rq_auth"):
 		if username:
 			cred["username"] = username
 			cred["password"] = password
 		else:
-			cred["username"] = frappe.get_site_config().rq_username or get_bench_id()
-			cred["password"] = frappe.get_site_config().rq_password
+			cred["username"] = conf.rq_username or get_bench_id()
+			cred["password"] = conf.rq_password
 
 	elif os.environ.get("RQ_ADMIN_PASWORD"):
 		cred["username"] = "default"
@@ -693,6 +708,9 @@ def _start_sentry():
 
 	if tracing_sample_rate := os.getenv("SENTRY_TRACING_SAMPLE_RATE"):
 		kwargs["traces_sample_rate"] = float(tracing_sample_rate)
+
+	if profiling_sample_rate := os.getenv("SENTRY_PROFILING_SAMPLE_RATE"):
+		kwargs["profiles_sample_rate"] = float(profiling_sample_rate)
 
 	sentry_sdk.init(
 		dsn=sentry_dsn,

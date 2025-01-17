@@ -32,6 +32,7 @@ class SystemSettings(Document):
 		bypass_2fa_for_retricted_ip_users: DF.Check
 		bypass_restrict_ip_check_if_2fa_enabled: DF.Check
 		country: DF.Link | None
+		currency: DF.Link | None
 		currency_precision: DF.Literal["", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
 		date_format: DF.Literal[
 			"yyyy-mm-dd", "dd-mm-yyyy", "dd/mm/yyyy", "dd.mm.yyyy", "mm/dd/yyyy", "mm-dd-yyyy"
@@ -59,6 +60,7 @@ class SystemSettings(Document):
 		float_precision: DF.Literal["", "2", "3", "4", "5", "6", "7", "8", "9"]
 		force_user_to_reset_password: DF.Int
 		force_web_capture_mode_for_uploads: DF.Check
+		hide_empty_read_only_fields: DF.Check
 		hide_footer_in_auto_email_reports: DF.Check
 		language: DF.Link
 		lifespan_qrcode_image: DF.Int
@@ -174,9 +176,7 @@ class SystemSettings(Document):
 
 	def on_update(self):
 		self.set_defaults()
-
-		frappe.cache.delete_value("system_settings")
-		frappe.cache.delete_value("time_zone")
+		clear_system_settings_cache()
 
 		if frappe.flags.update_last_reset_password_date:
 			update_last_reset_password_date()
@@ -218,3 +218,25 @@ def load():
 			defaults[df.fieldname] = all_defaults.get(df.fieldname)
 
 	return {"timezones": get_all_timezones(), "defaults": defaults}
+
+
+cache_key = frappe.get_document_cache_key("System Settings", "System Settings")
+
+
+def get_system_settings(key: str):
+	"""Return the value associated with the given `key` from System Settings DocType."""
+	if not (system_settings := getattr(frappe.local, "system_settings", None)):
+		try:
+			system_settings = frappe.client_cache.get_doc("System Settings")
+			frappe.local.system_settings = system_settings
+		except frappe.DoesNotExistError:  # possible during new install
+			frappe.clear_last_message()
+			return
+
+	return system_settings.get(key)
+
+
+def clear_system_settings_cache():
+	frappe.client_cache.delete_value(cache_key)
+	frappe.cache.delete_value("system_settings")
+	frappe.cache.delete_value("time_zone")

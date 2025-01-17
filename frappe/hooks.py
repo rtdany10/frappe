@@ -27,6 +27,7 @@ app_include_js = [
 	"controls.bundle.js",
 	"report.bundle.js",
 	"telemetry.bundle.js",
+	"billing.bundle.js",
 ]
 
 app_include_css = [
@@ -191,10 +192,10 @@ doc_events = {
 		"on_update": "frappe.integrations.doctype.google_contacts.google_contacts.update_contacts_to_google_contacts",
 	},
 	"DocType": {
-		"on_update": "frappe.cache_manager.build_domain_restriced_doctype_cache",
+		"on_update": "frappe.cache_manager.build_domain_restricted_doctype_cache",
 	},
 	"Page": {
-		"on_update": "frappe.cache_manager.build_domain_restriced_page_cache",
+		"on_update": "frappe.cache_manager.build_domain_restricted_page_cache",
 	},
 }
 
@@ -212,6 +213,7 @@ scheduler_events = {
 			"frappe.email.doctype.email_account.email_account.notify_unreplied",
 			"frappe.utils.global_search.sync_global_search",
 			"frappe.deferred_insert.save_to_db",
+			"frappe.automation.doctype.reminder.reminder.send_reminders",
 		],
 		# 10 minutes
 		"0/10 * * * *": [
@@ -229,7 +231,6 @@ scheduler_events = {
 	"all": [
 		"frappe.email.queue.flush",
 		"frappe.monitor.flush",
-		"frappe.automation.doctype.reminder.reminder.send_reminders",
 	],
 	"hourly": [
 		"frappe.model.utils.link_count.update_link_count",
@@ -445,7 +446,9 @@ before_job = [
 ]
 
 if os.getenv("FRAPPE_SENTRY_DSN") and (
-	os.getenv("ENABLE_SENTRY_DB_MONITORING") or os.getenv("SENTRY_TRACING_SAMPLE_RATE")
+	os.getenv("ENABLE_SENTRY_DB_MONITORING")
+	or os.getenv("SENTRY_TRACING_SAMPLE_RATE")
+	or os.getenv("SENTRY_PROFILING_SAMPLE_RATE")
 ):
 	before_request.append("frappe.utils.sentry.set_sentry_context")
 	before_job.append("frappe.utils.sentry.set_sentry_context")
@@ -576,4 +579,7 @@ persistent_cache_keys = [
 	"insert_queue_for_*",  # Deferred Insert
 	"recorder-*",  # Recorder
 	"global_search_queue",
+	"monitor-transactions",
+	"rate-limit-counter-*",
+	"rl:*",
 ]

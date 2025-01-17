@@ -152,7 +152,7 @@ def get_app_last_commit_ref(app):
 	try:
 		with open(os.devnull, "wb") as null_stream:
 			result = subprocess.check_output(
-				f"cd ../apps/{app} && git rev-parse HEAD --short 7",
+				f"git -C ../apps/{app} rev-parse --short=7 HEAD",
 				shell=True,
 				stdin=null_stream,
 				stderr=null_stream,
@@ -184,6 +184,9 @@ def check_for_update():
 		branch_version = (
 			apps[app]["branch_version"].split(" ", 1)[0] if apps[app].get("branch_version", "") else ""
 		)
+		if "develop" in branch_version:
+			return updates
+
 		instance_version = Version(branch_version or apps[app].get("version"))
 
 		github_version, org_name = check_release_on_github(owner, repo, instance_version)

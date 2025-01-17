@@ -5,7 +5,9 @@ from frappe import _
 from frappe.utils import cint, cstr, flt
 from frappe.utils.defaults import get_not_null_defaults
 
+# This matches anything that isn't [a-zA-Z0-9_]
 SPECIAL_CHAR_PATTERN = re.compile(r"[\W]", flags=re.UNICODE)
+
 VARCHAR_CAST_PATTERN = re.compile(r"varchar\(([\d]+)\)")
 
 
@@ -42,7 +44,7 @@ class DBTable:
 		if self.is_new():
 			self.create()
 		else:
-			frappe.cache.hdel("table_columns", self.table_name)
+			frappe.client_cache.delete_value(f"table_columns::{self.table_name}")
 			self.alter()
 
 	def create(self):

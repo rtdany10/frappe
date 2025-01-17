@@ -406,7 +406,7 @@ def remove_blanks(d: dict) -> dict:
 	return d
 
 
-def strip_html_tags(text):
+def strip_html_tags(text: str) -> str:
 	"""Remove html tags from the given `text`."""
 	return HTML_TAGS_PATTERN.sub("", text)
 
@@ -833,7 +833,7 @@ def get_site_info():
 	return json.loads(frappe.as_json(site_info))
 
 
-def parse_json(val):
+def parse_json(val: str):
 	"""
 	Parses json if string else return
 	"""
@@ -961,18 +961,15 @@ def get_assets_json():
 
 		return assets
 
-	if not hasattr(frappe.local, "assets_json"):
-		if not frappe.conf.developer_mode:
-			frappe.local.assets_json = frappe.cache.get_value(
-				"assets_json",
-				_get_assets,
-				shared=True,
-			)
+	if not frappe.conf.developer_mode:
+		return frappe.client_cache.get_value(
+			"assets_json",
+			shared=True,
+			generator=_get_assets,
+		)
 
-		else:
-			frappe.local.assets_json = _get_assets()
-
-	return frappe.local.assets_json
+	else:
+		return _get_assets()
 
 
 def get_bench_relative_path(file_path):

@@ -50,7 +50,7 @@ def setup_complete(args):
 	if cint(frappe.db.get_single_value("System Settings", "setup_complete")):
 		return {"status": "ok"}
 
-	args = parse_args(args)
+	args = parse_args(sanitize_input(args))
 	stages = get_setup_stages(args)
 	is_background_task = frappe.conf.get("trigger_site_setup_in_background")
 
@@ -176,6 +176,7 @@ def update_system_settings(args):  # nosemgrep
 			"country": args.get("country"),
 			"language": get_language_code(args.get("language")) or "en",
 			"time_zone": args.get("timezone"),
+			"currency": args.get("currency"),
 			"float_precision": 3,
 			"rounding_method": "Banker's Rounding",
 			"date_format": frappe.db.get_value("Country", args.get("country"), "date_format"),
@@ -252,6 +253,19 @@ def parse_args(args):  # nosemgrep
 	return args
 
 
+def sanitize_input(args):
+	from frappe.utils import is_html, strip_html_tags
+
+	if isinstance(args, str):
+		args = json.loads(args)
+
+	for key, value in args.items():
+		if is_html(value):
+			args[key] = strip_html_tags(value)
+
+	return args
+
+
 def add_all_roles_to(name):
 	user = frappe.get_doc("User", name)
 	user.append_roles(*_get_default_roles())
@@ -304,13 +318,6 @@ def load_languages():
 		"languages": sorted(frappe.db.sql_list("select language_name from tabLanguage order by name")),
 		"codes_to_names": codes_to_names,
 	}
-
-
-@frappe.whitelist(allow_guest=True)
-def load_country():
-	from frappe.sessions import get_geo_ip_country
-
-	return get_geo_ip_country(frappe.local.request_ip) if frappe.local.request_ip else None
 
 
 @frappe.whitelist()

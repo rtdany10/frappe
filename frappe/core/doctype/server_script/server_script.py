@@ -2,7 +2,7 @@
 # License: MIT. See LICENSE
 
 from functools import partial
-from types import FunctionType, MethodType, ModuleType
+from itertools import chain
 from typing import TYPE_CHECKING
 
 import frappe
@@ -11,7 +11,7 @@ from frappe.model.document import Document
 from frappe.rate_limiter import rate_limit
 from frappe.utils.safe_exec import (
 	FrappeTransformer,
-	NamespaceDict,
+	get_keys_for_autocomplete,
 	get_safe_globals,
 	is_safe_exec_enabled,
 	safe_exec,
@@ -90,14 +90,14 @@ class ServerScript(Document):
 		self.sync_scheduled_job_type()
 
 	def clear_cache(self):
-		frappe.cache.delete_value("server_script_map")
+		frappe.client_cache.delete_value("server_script_map")
 		return super().clear_cache()
 
 	def on_trash(self):
-		frappe.cache.delete_value("server_script_map")
+		frappe.client_cache.delete_value("server_script_map")
 		if self.script_type == "Scheduler Event":
 			for job in self.scheduled_jobs:
-				scheduled_job_type: "ScheduledJobType" = frappe.get_doc("Scheduled Job Type", job.name)
+				scheduled_job_type: ScheduledJobType = frappe.get_doc("Scheduled Job Type", job.name)
 				scheduled_job_type.stopped = True
 				scheduled_job_type.server_script = None
 				scheduled_job_type.save()
@@ -224,41 +224,15 @@ def get_autocompletion_items():
 	e.g., ["frappe.utils.cint", "frappe.get_all", ...]
 	"""
 
-	def get_keys(obj):
-		out = []
-		for key in obj:
-			if key.startswith("_"):
-				continue
-			value = obj[key]
-			if isinstance(value, NamespaceDict | dict) and value:
-				if key == "form_dict":
-					out.append(["form_dict", 7])
-					continue
-				for subkey, score in get_keys(value):
-					fullkey = f"{key}.{subkey}"
-					out.append([fullkey, score])
-			else:
-				if isinstance(value, type) and issubclass(value, Exception):
-					score = 0
-				elif isinstance(value, ModuleType):
-					score = 10
-				elif isinstance(value, FunctionType | MethodType):
-					score = 9
-				elif isinstance(value, type):
-					score = 8
-				elif isinstance(value, dict):
-					score = 7
-				else:
-					score = 6
-				out.append([key, score])
-		return out
-
-	items = frappe.cache.get_value("server_script_autocompletion_items")
-	if not items:
-		items = get_keys(get_safe_globals())
-		items = [{"value": d[0], "score": d[1]} for d in items]
-		frappe.cache.set_value("server_script_autocompletion_items", items)
-	return items
+	return frappe.cache.get_value(
+		"server_script_autocompletion_items",
+		generator=lambda: list(
+			chain.from_iterable(
+				get_keys_for_autocomplete(key, value, meta="utils")
+				for key, value in get_safe_globals().items()
+			),
+		),
+	)
 
 
 def execute_api_server_script(script: ServerScript, *args, **kwargs):

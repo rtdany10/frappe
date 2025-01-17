@@ -8,7 +8,7 @@ import re
 import string
 import traceback
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Hashable, Iterable, Sequence
 from contextlib import contextmanager, suppress
 from time import time
 from typing import TYPE_CHECKING, Any
@@ -22,13 +22,16 @@ from frappe.database.utils import (
 	DefaultOrderBy,
 	EmptyQueryValues,
 	FallBackDateTimeStr,
+	FilterValue,
 	LazyMogrify,
 	Query,
 	QueryValues,
+	convert_to_value,
 	is_query_type,
 )
 from frappe.exceptions import DoesNotExistError, ImplicitCommitError
 from frappe.monitor import get_trace_id
+from frappe.query_builder import Case
 from frappe.query_builder.functions import Count
 from frappe.utils import CallbackManager, cint, get_datetime, get_table_name, getdate, now, sbool
 from frappe.utils import cast as cast_fieldtype
@@ -114,8 +117,8 @@ class Database:
 
 	def connect(self):
 		"""Connects to a database as set in `site_config.json`."""
-		self._conn: "MariadbConnection" | "PostgresConnection" = self.get_connection()
-		self._cursor: "MariadbCursor" | "PostgresCursor" = self._conn.cursor()
+		self._conn: MariadbConnection | PostgresConnection = self.get_connection()
+		self._cursor: MariadbCursor | PostgresCursor = self._conn.cursor()
 
 		try:
 			if execution_timeout := get_query_execution_timeout():
@@ -336,7 +339,11 @@ class Database:
 		"""Takes the query and logs it to various interfaces according to the settings."""
 		_query = None
 
-		if frappe.conf.allow_tests and frappe.cache.get_value("flag_print_sql"):
+		if (
+			frappe.conf.allow_tests
+			and frappe.conf.developer_mode
+			and frappe.cache.get_value("flag_print_sql")
+		):
 			_query = _query or str(mogrified_query)
 			print(_query)
 
@@ -474,21 +481,21 @@ class Database:
 
 	def get_value(
 		self,
-		doctype,
-		filters=None,
-		fieldname="name",
-		ignore=None,
-		as_dict=False,
-		debug=False,
-		order_by=DefaultOrderBy,
-		cache=False,
-		for_update=False,
+		doctype: str,
+		filters: FilterValue | dict | list | None = None,
+		fieldname: str | list[str] = "name",
+		ignore: bool = False,
+		as_dict: bool = False,
+		debug: bool = False,
+		order_by: str = DefaultOrderBy,
+		cache: bool = False,
+		for_update: bool = False,
 		*,
-		run=True,
-		pluck=False,
-		distinct=False,
-		skip_locked=False,
-		wait=True,
+		run: bool = True,
+		pluck: bool = False,
+		distinct: bool = False,
+		skip_locked: bool = False,
+		wait: bool = True,
 	):
 		"""Return a document property or list of properties.
 
@@ -553,23 +560,23 @@ class Database:
 
 	def get_values(
 		self,
-		doctype,
-		filters=None,
-		fieldname="name",
-		ignore=None,
-		as_dict=False,
-		debug=False,
-		order_by=DefaultOrderBy,
-		update=None,
-		cache=False,
-		for_update=False,
+		doctype: str,
+		filters: FilterValue | dict | list | None = None,
+		fieldname: str | list[str] = "name",
+		ignore: bool = False,
+		as_dict: bool = False,
+		debug: bool = False,
+		order_by: str = DefaultOrderBy,
+		update: dict | None = None,
+		cache: bool = False,
+		for_update: bool = False,
 		*,
-		run=True,
-		pluck=False,
-		distinct=False,
-		limit=None,
-		skip_locked=False,
-		wait=True,
+		run: bool = True,
+		pluck: bool = False,
+		distinct: bool = False,
+		limit: int | None = None,
+		skip_locked: bool = False,
+		wait: bool = True,
 	):
 		"""Return multiple document properties.
 
@@ -591,55 +598,53 @@ class Database:
 		        user = frappe.db.get_values("User", "test@example.com", "*")[0]
 		"""
 		out = None
-		if cache and isinstance(filters, str) and (doctype, filters, fieldname) in self.value_cache:
-			return self.value_cache[(doctype, filters, fieldname)]
+		cache_key = None
+		if cache and isinstance(filters, str):
+			cache_key = (doctype, filters, fieldname)
+			if cache_key in self.value_cache:
+				return self.value_cache[cache_key]
 
 		if distinct:
 			order_by = None
 
 		if isinstance(filters, list):
-			out = self._get_value_for_many_names(
-				doctype=doctype,
-				names=filters,
-				field=fieldname,
-				order_by=order_by,
-				debug=debug,
-				run=run,
-				pluck=pluck,
-				distinct=distinct,
-				limit=limit,
-				as_dict=as_dict,
-				skip_locked=skip_locked,
-				wait=True,
-				for_update=for_update,
-			)
-
+			if filters := list(f for f in filters if f is not None):
+				out = frappe.qb.get_query(
+					table=doctype,
+					fields=fieldname,
+					filters=filters,
+					order_by=order_by,
+					distinct=distinct,
+					limit=limit,
+					validate_filters=True,
+					for_update=for_update,
+					skip_locked=skip_locked,
+					wait=True,
+				).run(debug=debug, run=run, as_dict=as_dict, pluck=pluck)
+			else:
+				out = {}
 		else:
-			fields = fieldname
-			if fieldname != "*":
-				if isinstance(fieldname, str):
-					fields = [fieldname]
-
 			if (filters is not None) and (filters != doctype or doctype == "DocType"):
 				try:
 					if order_by:
 						order_by = "creation" if order_by == DefaultOrderBy else order_by
-					out = self._get_values_from_table(
-						fields=fields,
+
+					query = frappe.qb.get_query(
+						table=doctype,
 						filters=filters,
-						doctype=doctype,
-						as_dict=as_dict,
-						debug=debug,
 						order_by=order_by,
-						update=update,
-						run=run,
-						pluck=pluck,
-						distinct=distinct,
-						limit=limit,
 						for_update=for_update,
 						skip_locked=skip_locked,
 						wait=wait,
+						fields=fieldname,
+						distinct=distinct,
+						limit=limit,
+						validate_filters=True,
 					)
+					if isinstance(fieldname, str) and fieldname == "*":
+						as_dict = True
+					out = query.run(as_dict=as_dict, debug=debug, update=update, run=run, pluck=pluck)
+
 				except Exception as e:
 					if ignore and (
 						frappe.db.is_missing_column(e)
@@ -649,19 +654,38 @@ class Database:
 						out = None
 					elif (not ignore) and frappe.db.is_table_missing(e):
 						# table not found, look in singles
+						fields = (
+							[fieldname] if (isinstance(fieldname, str) and fieldname != "*") else fieldname
+						)
 						out = self.get_values_from_single(
-							fields, filters, doctype, as_dict, debug, update, run=run, distinct=distinct
+							fields,
+							filters,
+							doctype,
+							as_dict,
+							debug,
+							update,
+							run=run,
+							distinct=distinct,
 						)
 
 					else:
 						raise
 			else:
+				fields = [fieldname] if (isinstance(fieldname, str) and fieldname != "*") else fieldname
 				out = self.get_values_from_single(
-					fields, filters, doctype, as_dict, debug, update, run=run, pluck=pluck, distinct=distinct
+					fields,
+					filters,
+					doctype,
+					as_dict,
+					debug,
+					update,
+					run=run,
+					pluck=pluck,
+					distinct=distinct,
 				)
 
-		if cache and isinstance(filters, str):
-			self.value_cache[(doctype, filters, fieldname)] = out
+		if cache and cache_key:
+			self.value_cache[cache_key] = out
 
 		return out
 
@@ -820,7 +844,7 @@ class Database:
 		if doctype in self.value_cache:
 			del self.value_cache[doctype]
 
-	def get_single_value(self, doctype, fieldname, cache=True):
+	def get_single_value(self, doctype: str, fieldname: str, cache: bool = True):
 		"""Get property of Single DocType. Cache locally by default
 
 		:param doctype: DocType of the single object whose value is requested
@@ -864,78 +888,11 @@ class Database:
 		"""Alias for get_single_value"""
 		return self.get_single_value(*args, **kwargs)
 
-	def _get_values_from_table(
-		self,
-		fields,
-		filters,
-		doctype,
-		as_dict,
-		*,
-		debug=False,
-		order_by=None,
-		update=None,
-		for_update=False,
-		skip_locked=False,
-		wait=True,
-		run=True,
-		pluck=False,
-		distinct=False,
-		limit=None,
-	):
-		query = frappe.qb.get_query(
-			table=doctype,
-			filters=filters,
-			order_by=order_by,
-			for_update=for_update,
-			skip_locked=skip_locked,
-			wait=wait,
-			fields=fields,
-			distinct=distinct,
-			limit=limit,
-			validate_filters=True,
-		)
-		if isinstance(fields, str) and fields == "*":
-			as_dict = True
-
-		return query.run(as_dict=as_dict, debug=debug, update=update, run=run, pluck=pluck)
-
-	def _get_value_for_many_names(
-		self,
-		doctype,
-		names,
-		field,
-		order_by,
-		*,
-		debug=False,
-		run=True,
-		pluck=False,
-		distinct=False,
-		limit=None,
-		as_dict=False,
-		for_update=False,
-		skip_locked=False,
-		wait=True,
-	):
-		if names := list(filter(None, names)):
-			return frappe.qb.get_query(
-				doctype,
-				fields=field,
-				filters=names,
-				order_by=order_by,
-				distinct=distinct,
-				limit=limit,
-				validate_filters=True,
-				for_update=for_update,
-				skip_locked=skip_locked,
-				wait=wait,
-			).run(debug=debug, run=run, as_dict=as_dict, pluck=pluck)
-		return {}
-
 	def set_value(
 		self,
-		dt,
-		dn,
-		field,
+		dt: str,
+		dn: FilterValue | dict,
+		field: str,
 		val=None,
 		modified=None,
 		modified_by=None,
@@ -990,8 +947,8 @@ class Database:
 			validate_filters=True,
 		)
 
-		if isinstance(dn, str):
-			frappe.clear_document_cache(dt, dn)
+		if isinstance(dn, FilterValue):
+			frappe.clear_document_cache(dt, convert_to_value(dn))
 		else:
 			# No way to guess which documents are modified, clear all of them
 			frappe.clear_document_cache(dt)
@@ -1004,6 +961,139 @@ class Database:
 		if dt in self.value_cache:
 			del self.value_cache[dt]
 
+	def bulk_update(
+		self,
+		doctype: str,
+		doc_updates: dict,
+		*,
+		chunk_size: int = 100,
+		modified: str | None = None,
+		modified_by: str | None = None,
+		update_modified: bool = True,
+		debug: bool = False,
+	):
+		"""
+		:param doctype: DocType to update
+		:param doc_updates: Dictionary of key (docname) and values to update
+		:param chunk_size: Number of documents to update in a single transaction
+		:param modified: Use this as the `modified` timestamp.
+		:param modified_by: Set this user as `modified_by`.
+		:param update_modified: default True. Update `modified` and `modified_by` fields
+		:param debug: Print the query in the developer / js console.
+
+		doc_updates should be in the following format:
+		```py
+		{
+		    "docname1": {
+		        "field1": "value1",
+		        "field2": "value2",
+		        ...
+		    },
+		    "docname2": {
+		        "field1": "value1",
+		        "field2": "value2",
+		        ...
+		    },
+		}
+		```
+
+		Note:
+		    - Bigger chunk sizes could be less performant. Use appropriate chunk size based on the number of fields to update.
+
+		"""
+		if not doc_updates:
+			return
+
+		modified_dict = None
+		if update_modified:
+			modified_dict = self._get_update_dict(
+				{}, None, modified=modified, modified_by=modified_by, update_modified=update_modified
+			)
+
+		total_docs = len(doc_updates)
+		iterator = iter(doc_updates.items())
+
+		for __ in range(0, total_docs, chunk_size):
+			doc_chunk = dict(itertools.islice(iterator, chunk_size))
+			self._build_and_run_bulk_update_query(doctype, doc_chunk, modified_dict, debug)
+
+	@staticmethod
+	def _build_and_run_bulk_update_query(
+		doctype: str, doc_updates: dict, modified_dict: dict | None = None, debug: bool = False
+	):
+		"""
+		:param doctype: DocType to update
+		:param doc_updates: Dictionary of key (docname) and values to update
+		:param debug: Print the query in the developer / js console.
+
+		---
+
+		doc_updates should be in the following format:
+		```py
+		{
+		    "docname1": {
+		        "field1": "value1",
+		        "field2": "value2",
+		        ...
+		    },
+		    "docname2": {
+		        "field1": "value1",
+		        "field2": "value2",
+		        ...
+		    },
+		}
+		```
+
+		---
+
+		Query will be built as:
+		```sql
+		UPDATE `tabItem`
+		SET `status` = CASE
+		    WHEN `name` = 'Item-1' THEN 'Close'
+		    WHEN `name` = 'Item-2' THEN 'Open'
+		    WHEN `name` = 'Item-3' THEN 'Close'
+		    WHEN `name` = 'Item-4' THEN 'Cancelled'
+		    ELSE `status`
+		end,
+		`description` = CASE
+		    WHEN `name` = 'Item-1' THEN 'This is the first task'
+		    WHEN `name` = 'Item-2' THEN 'This is the second task'
+		    WHEN `name` = 'Item-3' THEN 'This is the third task'
+		    WHEN `name` = 'Item-4' THEN 'This is the fourth task'
+		    ELSE `description`
+		end
+		WHERE  `name` IN ( 'Item-1', 'Item-2', 'Item-3', 'Item-4' )
+		```
+		"""
+		if not doc_updates:
+			return
+
+		dt = frappe.qb.DocType(doctype)
+		update_query = frappe.qb.update(dt)
+
+		conditions = {}
+		docnames = list(doc_updates.keys())
+
+		for docname, row in doc_updates.items():
+			for field, value in row.items():
+				# CASE
+				if field not in conditions:
+					conditions[field] = Case()
+
+				# WHEN
+				conditions[field].when(dt.name == docname, value)
+
+		for field in conditions:
+			# ELSE
+			update_query = update_query.set(dt[field], conditions[field].else_(dt[field]))
+
+		if modified_dict:
+			for column, value in modified_dict.items():
+				update_query = update_query.set(dt[column], value)
+
+		update_query.where(dt.name.isin(docnames)).run(debug=debug)
+
 	def set_global(self, key, val, user="__global"):
 		"""Save a global key value. Global values will be automatically set if they match fieldname."""
 		self.set_default(key, val, user)
@@ -1015,7 +1105,7 @@ class Database:
 	def get_default(self, key, parent="__default"):
 		"""Return default value as a list if multiple or single."""
 		d = self.get_defaults(key, parent)
-		return isinstance(d, list) and d[0] or d
+		return (isinstance(d, list) and d[0]) or d
 
 	@staticmethod
 	def set_default(key, val, parent="__default", parenttype=None):
@@ -1188,7 +1278,8 @@ class Database:
 
 	def get_db_table_columns(self, table) -> list[str]:
 		"""Return list of column names from given table."""
-		columns = frappe.cache.hget("table_columns", table)
+		key = f"table_columns::{table}"
+		columns = frappe.client_cache.get_value(key)
 		if columns is None:
 			information_schema = frappe.qb.Schema("information_schema")
 
@@ -1200,7 +1291,7 @@ class Database:
 			)
 
 			if columns:
-				frappe.cache.hset("table_columns", table, columns)
+				frappe.cache.set_value(key, columns)
 
 		return columns
 

@@ -34,6 +34,12 @@ class TestResult(unittest.TextTestResult):
 		self._old_stdout = []
 		self._old_stderr = []
 
+	def _setupStdout(self):
+		pass
+
+	def _restoreStdout(self):
+		pass
+
 	def startTestRun(self):
 		if not sys.warnoptions:
 			import warnings
@@ -42,6 +48,20 @@ class TestResult(unittest.TextTestResult):
 
 			warnings.simplefilter("ignore")
 			warnings.filterwarnings("module", category=FrappeDeprecationWarning)
+
+		# capture class & module setup & teardown in order to show it above the first test of the class
+		if self.buffer:
+			self._old_stderr.append(sys.stderr)
+			self._old_stdout.append(sys.stdout)
+			self._module_or_class_stdout_capture = io.StringIO()
+			self._module_or_class_stderr_capture = io.StringIO()
+			sys.stdout = self._module_or_class_stdout_capture
+			sys.stderr = self._module_or_class_stderr_capture
+
+	def stopTestRun(self):
+		if self.buffer:
+			sys.stdout = self._old_stdout.pop()
+			sys.stderr = self._old_stderr.pop()
 
 	def startTest(self, test):
 		self.tb_locals = True
@@ -52,6 +72,22 @@ class TestResult(unittest.TextTestResult):
 			self.current_test_class = test_class
 			self.stream.write(f"\n{test_class}\n")
 			logger.info(f"{test_class}")
+
+			if hasattr(self, "_module_or_class_stdout_capture"):
+				for line in self._module_or_class_stdout_capture.getvalue().splitlines():
+					self.stream.write(click.style(f"  ▹ {line}\n", fg="bright_black"))
+					self.stream.flush()
+				self._module_or_class_stdout_capture.seek(0)
+				self._module_or_class_stdout_capture.truncate()
+
+			if hasattr(self, "_module_or_class_stderr_capture"):
+				for line in self._module_or_class_stderr_capture.getvalue().splitlines():
+					# self.stream.write(f"  ▸ {line}\n")
+					self.stream.write(click.style(f"  ▸ {line}\n", fg="bright_black"))
+					self.stream.flush()
+				self._module_or_class_stderr_capture.seek(0)
+				self._module_or_class_stderr_capture.truncate()
+
 			if new_doctypes := getattr(test.__class__, "_newly_created_test_records", None):
 				records = [f"{name} ({qty})" for name, qty in reversed(new_doctypes)]
 				hint = click.style(f"  Test Records created: {', '.join(records)}", fg="bright_black")
@@ -59,23 +95,25 @@ class TestResult(unittest.TextTestResult):
 				logger.info(f"records created: {', '.join(records)}")
 			self.stream.flush()
 
-		self._old_stderr.append(sys.stderr)
-		self._old_stdout.append(sys.stdout)
-		self._test_stdout_capture = io.StringIO()
-		self._test_stderr_capture = io.StringIO()
-		sys.stdout = self._test_stdout_capture
-		sys.stderr = self._test_stderr_capture
+		if self.buffer:
+			self._old_stderr.append(sys.stderr)
+			self._old_stdout.append(sys.stdout)
+			self._test_stdout_capture = io.StringIO()
+			self._test_stderr_capture = io.StringIO()
+			sys.stdout = self._test_stdout_capture
+			sys.stderr = self._test_stderr_capture
 
 	def stopTest(self, test):
 		super().stopTest(test)
-		sys.stdout = self._old_stderr.pop()
-		sys.stderr = self._old_stdout.pop()
-		for line in self._test_stdout_capture.getvalue().splitlines():
-			self.stream.write(f"       ▹  {line}\n")
-			self.stream.flush()
-		for line in self._test_stderr_capture.getvalue().splitlines():
-			self.stream.write(f"       ▸  {line}\n")
-			self.stream.flush()
+		if self.buffer:
+			sys.stdout = self._old_stderr.pop()
+			sys.stderr = self._old_stdout.pop()
+			for line in self._test_stdout_capture.getvalue().splitlines():
+				self.stream.write(f"       ▹  {line}\n")
+				self.stream.flush()
+			for line in self._test_stderr_capture.getvalue().splitlines():
+				self.stream.write(f"       ▸  {line}\n")
+				self.stream.flush()
 
 	def getTestMethodName(self, test):
 		return test._testMethodName if hasattr(test, "_testMethodName") else str(test)

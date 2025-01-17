@@ -91,7 +91,11 @@ def new_site(
 
 	frappe.init(site, new_site=True)
 
-	mariadb_user_host_login_scope = None
+	if site in frappe.get_all_apps():
+		click.secho(
+			f"Your bench has an app called {site}, please choose another name for the site.", fg="red"
+		)
+		sys.exit(1)
 
 	if no_mariadb_socket:
 		click.secho(
@@ -101,8 +105,6 @@ def new_site(
 			fg="yellow",
 		)
 		mariadb_user_host_login_scope = "%"
-	if mariadb_user_host_login_scope:
-		mariadb_user_host_login_scope = mariadb_user_host_login_scope
 
 	rollback_callback = CallbackManager()
 
@@ -782,7 +784,7 @@ def reload_doctype(context: CliCtxObj, doctype):
 def add_to_hosts(context: CliCtxObj):
 	"Add site to hosts"
 	for site in context.sites:
-		frappe.commands.popen(f"echo 127.0.0.1\t{site} | sudo tee -a /etc/hosts")
+		frappe.commands.popen(f"echo '127.0.0.1\t{site}\n::1\t{site}' | sudo tee -a /etc/hosts")
 	if not context.sites:
 		raise SiteNotSpecifiedError
 
