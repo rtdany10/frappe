@@ -51,6 +51,8 @@ def can_cache(no_cache=False):
 		return False
 	if getattr(frappe.local, "no_cache", False):
 		return False
+	if frappe.request and frappe.request.query_string:
+		return False
 	return not no_cache
 
 
@@ -161,6 +163,7 @@ def get_home_page_via_hooks():
 
 
 def get_boot_data():
+	from frappe.integrations.frappe_providers.frappecloud_billing import is_fc_site
 	from frappe.locale import get_date_format, get_first_day_of_the_week, get_number_format, get_time_format
 
 	return {
@@ -185,6 +188,7 @@ def get_boot_data():
 		},
 		"assets_json": get_assets_json(),
 		"sitename": frappe.local.site,
+		"is_fc_site": 1 if is_fc_site() else 0,
 	}
 
 
@@ -521,14 +525,16 @@ def cache_html(func):
 	def cache_html_decorator(*args, **kwargs):
 		cache_key = f"{WEBSITE_PAGE_CACHE_PREFIX}{args[0].path}"
 
-		if can_cache():
+		cache_headers = {"Cache-Control": "private,max-age=300,stale-while-revalidate=10800"}
+		no_cache = frappe.request and frappe.request.cache_control.no_cache
+		if can_cache(no_cache):
 			html = None
 			page_cache = frappe.cache.get_value(cache_key)
 			if page_cache and frappe.local.lang in page_cache:
 				html = page_cache[frappe.local.lang]
 			if html:
 				frappe.local.response.from_cache = True
-				frappe.local.response.can_cache = True
+				frappe.local.response_headers.update(cache_headers)
 				return html
 		html = func(*args, **kwargs)
 		context = args[0].context
@@ -536,7 +542,7 @@ def cache_html(func):
 			page_cache = frappe.cache.get_value(cache_key) or {}
 			page_cache[frappe.local.lang] = html
 			frappe.cache.set_value(cache_key, page_cache, expires_in_sec=30 * 60)
-			frappe.local.response.can_cache = True
+			frappe.local.response_headers.update(cache_headers)
 
 		return html
 
@@ -551,7 +557,8 @@ def build_response(path, data, http_status_code, headers: dict | None = None):
 	response.headers["X-Page-Name"] = cstr(cstr(path).encode("ascii", errors="xmlcharrefreplace"))
 	response.headers["X-From-Cache"] = frappe.local.response.from_cache or False
 
-	add_preload_for_bundled_assets(response)
+	if http_status_code != 404:
+		add_preload_for_bundled_assets(response)
 
 	if headers:
 		for key, val in headers.items():

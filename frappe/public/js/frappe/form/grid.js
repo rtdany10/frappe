@@ -24,6 +24,9 @@ export default class Grid {
 		this.fieldinfo = {};
 		this.doctype = this.df.options;
 
+		this.sticky_row_sum = 71;
+		this.sticky_rows = [];
+
 		if (this.doctype) {
 			this.meta = frappe.get_meta(this.doctype);
 		}
@@ -76,9 +79,6 @@ export default class Grid {
 							</div>
 						</div>
 					</div>
-					<div class="grid-scroll-bar">
-						<div class="grid-scroll-bar-rows"></div>
-					</div>
 				</div>
 				<div class="small form-clickable-section grid-footer">
 					<div class="flex justify-between">
@@ -122,60 +122,10 @@ export default class Grid {
 		frappe.utils.bind_actions_with_object(this.wrapper, this);
 
 		this.form_grid = this.wrapper.find(".form-grid");
-
-		if (this.form_grid) {
-			this.form_grid.on("wheel", (e) => {
-				const isTrackpad = Math.abs(e.originalEvent.wheelDeltaY) < 50;
-				const delta = e.originalEvent.deltaX;
-				const scroll_bar = this.wrapper.find(".grid-scroll-bar");
-
-				if (isTrackpad) {
-					scroll_bar.scrollLeft(scroll_bar.scrollLeft() + delta);
-				} else {
-					scroll_bar.scrollLeft(scroll_bar.scrollLeft() + delta * 4);
-				}
-
-				// prevent default behaviour when it is scrolled horizontally
-				if (e.originalEvent.deltaX != 0) {
-					e.preventDefault();
-				}
-			});
-			let touchStartX = 0;
-			let touchMoveX = 0;
-			let isTouchScrolling = false;
-
-			// Handle touch start
-			this.form_grid.on("touchstart", (e) => {
-				const touch = e.originalEvent.touches[0];
-				touchStartX = touch.pageX;
-				isTouchScrolling = true;
-			});
-
-			// Handle touch move
-			this.form_grid.on("touchmove", (e) => {
-				if (!isTouchScrolling) return;
-
-				const touch = e.originalEvent.touches[0];
-				touchMoveX = touch.pageX;
-
-				const scrollBar = this.wrapper.find(".grid-scroll-bar");
-				const deltaX = touchStartX - touchMoveX;
-
-				scrollBar.scrollLeft(scrollBar.scrollLeft() + deltaX);
-
-				touchStartX = touchMoveX;
-
-				e.preventDefault();
-			});
-
-			// Handle touch end
-			this.form_grid.on("touchend", () => {
-				isTouchScrolling = false;
-			});
-		}
 		this.setup_add_row();
 
 		this.setup_grid_pagination();
+		this.update_idx_and_name();
 
 		this.custom_buttons = {};
 		this.grid_buttons = this.wrapper.find(".grid-buttons");
@@ -196,6 +146,17 @@ export default class Grid {
 		} else {
 			description_wrapper.hide();
 		}
+	}
+
+	update_idx_and_name() {
+		this.data.forEach((d, ri) => {
+			if (d.idx === undefined) {
+				d.idx = ri + 1;
+			}
+			if (d.name === undefined) {
+				d.name = "row " + d.idx;
+			}
+		});
 	}
 
 	set_doc_url() {
@@ -1078,6 +1039,7 @@ export default class Grid {
 					if (column) {
 						column.in_list_view = 1;
 						column.columns = row.columns;
+						column.sticky = row.sticky;
 						return column;
 					}
 				})

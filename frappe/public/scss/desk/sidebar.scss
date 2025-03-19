@@ -1,4 +1,20 @@
 // clean-this-file
+:root {
+	--sidebar-hover-color: #f3f3f3;
+	--sidebar-active-color: rgba(255, 255, 255, 1);
+	--sidebar-border-color: #ededed;
+	--surface-modal: rgba(255, 255, 255, 1);
+	--divider-color: rgba(237, 237, 237, 1);
+	--sidebar-width: 220px;
+	--left-sidebar-width: 240px;
+}
+[data-theme="dark"] {
+	--sidebar-hover-color: rgba(43, 43, 43, 1);
+	--sidebar-active-color: rgba(66, 66, 66, 1);
+	--sidebar-border-color: #232323;
+	--surface-modal: rgb(0, 0, 0);
+	--divider-color: rgba(52, 52, 52, 1);
+}
 .underline-hover {
 	display: initial;
 }
@@ -48,7 +64,9 @@ body {
 	overflow: scroll;
 	overflow-x: hidden;
 	overflow-y: visible;
+	scrollbar-gutter: stable;
 }
+
 .body-sidebar-container {
 	display: flex;
 	flex-direction: column;
@@ -65,7 +83,7 @@ body {
 .body-sidebar {
 	width: 50px;
 	background: var(--subtle-accent);
-	border-right: 1px solid var(--dark-border-color);
+	border-right: 1px solid var(--sidebar-border-color);
 
 	display: flex;
 	flex-direction: column;
@@ -107,7 +125,7 @@ body {
 	}
 
 	.sidebar-items {
-		width: 204px;
+		width: 224px;
 		padding-left: 1px;
 		padding-right: 1px;
 		width: 100%;
@@ -115,7 +133,7 @@ body {
 
 	.divider {
 		margin: var(--margin-xs) 0;
-		border-top: 1px solid var(--border-color);
+		border-top: 1px solid var(--divider-color);
 	}
 
 	.standard-sidebar-section {
@@ -140,7 +158,6 @@ body {
 	.standard-sidebar-item {
 		display: flex;
 		line-height: 0px;
-		justify-content: space-between;
 		padding: 0px;
 		.sidebar-item-control {
 			display: none;
@@ -158,7 +175,7 @@ body {
 			}
 
 			svg {
-				margin: -1px;
+				margin: -4px;
 			}
 		}
 
@@ -234,17 +251,17 @@ body {
 	.body-sidebar {
 		// make it an overlay on hover
 		position: absolute;
-		width: 220px;
+		width: var(--left-sidebar-width);
 		.app-switcher-dropdown {
-			width: 204px;
+			width: 224px;
 			left: 0px;
-			padding: 2px 0px 2px 3px;
+			padding: 3px;
 		}
 		.body-sidebar-top {
-			width: 204px;
+			width: 224px;
 			overflow-y: hidden;
 			.app-switcher-dropdown {
-				width: 204px;
+				width: 224px;
 			}
 		}
 		.sidebar-item-container {
@@ -265,7 +282,7 @@ body {
 			visibility: visible;
 		}
 		.body-sidebar-bottom {
-			width: 220px;
+			width: 224px;
 			position: static;
 		}
 	}
@@ -273,7 +290,7 @@ body {
 	// show placeholder so that main section remains static
 	.body-sidebar-placeholder {
 		display: flex;
-		width: 220px;
+		width: var(--left-sidebar-width);
 	}
 }
 
@@ -293,10 +310,26 @@ body {
 
 	// expands when navbar-brand is clicked
 	.body-sidebar-container.expanded {
+		position: relative;
 		.body-sidebar {
 			padding: 8px 8px 10px 8px;
-			width: 220px;
+			width: var(--left-sidebar-width);
+			height: 100%;
+			position: absolute;
+			bottom: 0;
+			top: 0;
 		}
+		.overlay {
+			display: block;
+			position: absolute;
+			width: calc(100vw - 240px);
+			height: 100%;
+			z-index: 1021;
+			left: var(--left-sidebar-width);
+			overflow: auto;
+			background-color: rgba(128, 128, 128, 0.5);
+		}
+
 		// acts a overlay when in mobile view
 		.body-sidebar-placeholder {
 			display: flex;
@@ -317,15 +350,15 @@ body {
 	text-decoration: none;
 	width: 38px;
 	height: 38px;
-	left: -2px;
 	padding: 3px;
+	margin-left: -2px;
 	.standard-sidebar-item {
 		padding-top: 1px;
 		padding-bottom: 1px;
 		.d-flex {
 			width: 161px;
 		}
-		gap: 12px;
+		gap: 30px;
 	}
 	.sidebar-item-control {
 		margin: 2px;
@@ -335,15 +368,13 @@ body {
 
 .app-switcher-menu {
 	position: absolute;
-	top: 44px;
-	left: 7px;
-	width: 220px; /* 200 - 7px */
+	top: 50px;
+	left: 9px;
+	width: 220px;
 	padding: 6px;
 	border-radius: var(--border-radius-lg);
-	background: var(--surface-modal, rgba(255, 255, 255, 1));
-	box-shadow: 0px 10px 24px -3px rgba(0, 0, 0, 0.1);
-	// box-shadow: 0px 1px 3px 0px rgba(0, 0, 0, 0.05);
-	// box-shadow: 0px 0px 1px 0px rgba(0, 0, 0, 0.2);
+	background: var(--surface-modal);
+	box-shadow: var(--shadow-xl);
 	z-index: 1;
 }
 
@@ -352,7 +383,7 @@ body {
 	border-radius: var(--border-radius-tiny);
 	opacity: 0px;
 	&:hover {
-		background-color: var(--subtle-accent);
+		background-color: var(--sidebar-hover-color);
 	}
 
 	a {
@@ -381,7 +412,7 @@ body {
 }
 // sidebar-item states
 @mixin hover-mixin {
-	background-color: #f3f3f3;
+	background-color: var(--sidebar-hover-color);
 	border-radius: 8px;
 }
 
@@ -390,12 +421,17 @@ body {
 }
 
 .active-sidebar {
-	background: var(--surface-selected, rgba(255, 255, 255, 1));
-	box-shadow: 0px 1px 2px 0px rgba(0, 0, 0, 0.1);
+	background: var(--sidebar-active-color);
+	box-shadow: var(--shadow-sm);
 	border-radius: 8px;
+}
+.overlay {
+	display: none;
 }
 // form sidebar
 .form-sidebar {
+	padding-top: var(--padding-sm);
+
 	.sidebar-section {
 		.form-sidebar-items {
 			display: flex;
@@ -453,12 +489,12 @@ body {
 	}
 
 	.sidebar-image-section {
-		width: min(100%, 220px);
+		width: min(100%, var(--sidebar-width));
 		cursor: pointer;
 
 		.sidebar-image {
 			height: auto;
-			max-height: 220px;
+			max-height: var(--sidebar-width);
 			object-fit: cover;
 		}
 
@@ -511,11 +547,11 @@ body {
 .layout-side-section {
 	@include get_textstyle("sm", "regular");
 	// padding-right: 30px;
-	width: 220px;
+	min-width: var(--sidebar-width);
 	border-left: 1px solid var(--border-color);
+
 	.sidebar-section {
-		padding: var(--padding-md);
-		border-bottom: 1px solid var(--border-color);
+		padding: var(--padding-sm) var(--padding-md);
 	}
 
 	.sidebar-section:last-child {
@@ -571,7 +607,7 @@ body {
 	}
 
 	.overlay-sidebar {
-		@media (max-width: 991px) {
+		@media (max-width: 992px) {
 			margin-top: 0 !important;
 			position: fixed;
 			background: var(--fg-color);
@@ -597,7 +633,7 @@ body {
 			}
 		}
 
-		@media (max-width: 767px) {
+		@media (max-width: 768px) {
 			width: 60%;
 		}
 	}
@@ -626,6 +662,13 @@ body {
 	}
 }
 
+@include media-breakpoint-down(sm) {
+	// dont show in mobile
+	.layout-side-section {
+		min-width: 0px;
+	}
+}
+
 .overlay-sidebar {
 	ul.dropdown-menu {
 		li {
@@ -640,6 +683,8 @@ body {
 }
 
 .list-sidebar {
+	padding-top: var(--padding-sm);
+
 	.sidebar-section a {
 		font-size: var(--text-xs);
 	}
@@ -671,7 +716,7 @@ body {
 		max-height: 300px;
 		overflow-y: auto;
 		min-width: 180px;
-		max-width: 220px;
+		max-width: var(--sidebar-width);
 		z-index: 100;
 		font-size: var(--text-sm);
 

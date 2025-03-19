@@ -382,8 +382,11 @@ class File(Document):
 			filters = {
 				"content_hash": self.content_hash,
 				"is_private": self.is_private,
-				"name": ("!=", self.name),
 			}
+
+			if self.name:
+				filters.update({"name": ("!=", self.name)})
+
 			if self.attached_to_doctype and self.attached_to_name:
 				filters.update(
 					{
@@ -658,7 +661,11 @@ class File(Document):
 		if duplicate_file:
 			file_doc: File = frappe.get_cached_doc("File", duplicate_file.name)
 			if file_doc.exists_on_disk():
-				self.file_url = duplicate_file.file_url
+				if self.exists_on_disk():
+					if not self.file_url:
+						self.file_url = duplicate_file.file_url
+				else:
+					self.file_url = duplicate_file.file_url
 				file_exists = True
 
 		if not file_exists:
@@ -818,6 +825,8 @@ def has_permission(doc, ptype=None, user=None, debug=False):
 
 		try:
 			ref_doc = frappe.get_doc(attached_to_doctype, attached_to_name)
+		except ModuleNotFoundError:
+			return False
 		except frappe.DoesNotExistError:
 			frappe.clear_last_message()
 			return False

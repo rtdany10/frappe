@@ -522,14 +522,6 @@ app_license = "{app_license}"
 # 	"Event": "frappe.desk.doctype.event.event.has_permission",
 # }}
 
-# DocType Class
-# ---------------
-# Override standard doctype classes
-
-# override_doctype_class = {{
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }}
-
 # Document Events
 # ---------------
 # Hook on document methods and events
@@ -755,7 +747,7 @@ jobs:
           check-latest: true
 
       - name: Cache pip
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{{{ runner.os }}}}-pip-${{{{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}}}
@@ -767,7 +759,7 @@ jobs:
         id: yarn-cache-dir-path
         run: 'echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT'
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         id: yarn-cache
         with:
           path: ${{{{ steps.yarn-cache-dir-path.outputs.dir }}}}
@@ -931,7 +923,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Cache pip
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py') }}

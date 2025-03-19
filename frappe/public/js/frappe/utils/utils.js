@@ -157,16 +157,12 @@ Object.assign(frappe.utils, {
 	is_html: function (txt) {
 		if (!txt) return false;
 
-		if (
-			txt.indexOf("<br>") == -1 &&
-			txt.indexOf("<p") == -1 &&
-			txt.indexOf("<img") == -1 &&
-			txt.indexOf("<div") == -1 &&
-			!txt.includes("<span")
-		) {
-			return false;
-		}
-		return true;
+		const doc = new DOMParser().parseFromString(txt, "text/html");
+		const nodes = doc.body.childNodes || [];
+
+		// check if any of the nodes are element nodes
+		// Ref: https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType
+		return [...nodes].some((node) => node.nodeType === 1);
 	},
 	is_mac: function () {
 		return window.navigator.platform === "MacIntel";
@@ -1304,7 +1300,8 @@ Object.assign(frappe.utils, {
 				if (item.is_query_report) {
 					route = "query-report/" + item.name;
 				} else if (!item.is_query_report && item.report_ref_doctype) {
-					route = frappe.router.slug(item.report_ref_doctype) + "/view/report/";
+					route =
+						frappe.router.slug(item.report_ref_doctype) + "/view/report/" + item.name;
 				} else {
 					route = "report/" + item.name;
 				}
