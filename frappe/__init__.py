@@ -42,7 +42,7 @@ from frappe.query_builder.utils import (
 	get_query_builder,
 )
 from frappe.utils.caching import deprecated_local_cache as local_cache
-from frappe.utils.caching import request_cache
+from frappe.utils.caching import request_cache, site_cache
 from frappe.utils.data import as_unicode, bold, cint, cstr, safe_decode, safe_encode, sbool
 from frappe.utils.local import Local, LocalProxy, release_local
 
@@ -224,7 +224,7 @@ def init(site: str, sites_path: str = ".", new_site: bool = False, force: bool =
 			"read_only": False,
 		}
 	)
-	local.locked_documents: list[Document] = []
+	local.locked_documents = []
 	local.test_objects = defaultdict(list)
 
 	local.site = site
@@ -1332,7 +1332,6 @@ def get_doc_hooks():
 	return local.doc_events_hooks
 
 
-@request_cache
 def _load_app_hooks(app_name: str | None = None):
 	import types
 
@@ -1359,6 +1358,10 @@ def _load_app_hooks(app_name: str | None = None):
 	return hooks
 
 
+_request_cached_load_app_hooks = request_cache(_load_app_hooks)
+_site_cached_load_app_hooks = site_cache(_load_app_hooks)
+
+
 def get_hooks(
 	hook: str | None = None, default: Any | None = "_KEEP_DEFAULT_LIST", app_name: str | None = None
 ) -> _dict:
@@ -1369,17 +1372,18 @@ def get_hooks(
 	:param app_name: Filter by app."""
 
 	if app_name:
-		hooks = _load_app_hooks(app_name)
+		hooks = _request_cached_load_app_hooks(app_name)
+	elif local.conf.developer_mode:
+		hooks = _site_cached_load_app_hooks()
 	else:
-		if conf.developer_mode:
+		hooks = client_cache.get_value("app_hooks")
+		if hooks is None:
 			hooks = _load_app_hooks()
-		else:
-			hooks = client_cache.get_value("app_hooks")
-			if hooks is None:
-				hooks = _load_app_hooks()
-				client_cache.set_value("app_hooks", hooks)
+			client_cache.set_value("app_hooks", hooks)
+
 	if hook:
 		return hooks.get(hook, ([] if default == "_KEEP_DEFAULT_LIST" else default))
+
 	return _dict(hooks)
 
 
@@ -1412,38 +1416,42 @@ def setup_module_map(include_all_apps: bool = True) -> None:
 	:return: Nothing
 	"""
 	if include_all_apps:
-		local.app_modules = cache.get_value("app_modules")
+		app_modules = cache.get_value("app_modules")
 	else:
-		local.app_modules = client_cache.get_value("installed_app_modules")
+		app_modules = client_cache.get_value("installed_app_modules")
 
-	if not local.app_modules:
-		local.app_modules = {}
+	if not app_modules:
+		app_modules = {}
+
 		if include_all_apps:
 			apps = get_all_apps(with_internal_apps=True)
 		else:
 			apps = get_installed_apps(_ensure_on_bench=True)
 
 		for app in apps:
-			local.app_modules.setdefault(app, [])
+			app_modules.setdefault(app, [])
 			for module in get_module_list(app):
 				module = scrub(module)
-				local.app_modules[app].append(module)
+				app_modules[app].append(module)
 
 		if include_all_apps:
-			cache.set_value("app_modules", local.app_modules)
+			cache.set_value("app_modules", app_modules)
 		else:
-			client_cache.set_value("installed_app_modules", local.app_modules)
+			client_cache.set_value("installed_app_modules", app_modules)
 
 	# Init module_app (reverse mapping)
-	local.module_app = {}
-	for app, modules in local.app_modules.items():
+	module_app = {}
+	for app, modules in app_modules.items():
 		for module in modules:
-			if module in local.module_app:
+			if module in module_app:
 				warnings.warn(
-					f"WARNING: module `{module}` found in apps `{local.module_app[module]}` and `{app}`",
+					f"WARNING: module `{module}` found in apps `{module_app[module]}` and `{app}`",
 					stacklevel=1,
 				)
-			local.module_app[module] = app
+			module_app[module] = app
+
+	local.app_modules = app_modules
+	local.module_app = module_app
 
 
 def get_file_items(path, raise_not_found=False, ignore_empty_lines=True):
@@ -1512,7 +1520,22 @@ def call(fn: str | Callable, *args, **kwargs):
 	return fn(*args, **newargs)
 
 
-_cached_inspect_signature = functools.lru_cache(inspect.signature)
+@functools.lru_cache
+def _get_cached_signature_params(fn: Callable) -> tuple[dict[str, Any], bool]:
+	"""
+	Get cached parameters for a function.
+	Returns a dictionary of parameters and a boolean indicating if the function has **kwargs.
+	"""
+
+	signature = inspect.signature(fn)
+
+	# if function has any **kwargs parameter that capture arbitrary keyword arguments
+	# Ref: https://docs.python.org/3/library/inspect.html#inspect.Parameter.kind
+	variable_kwargs_exist = any(
+		parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
+	)
+
+	return dict(signature.parameters), variable_kwargs_exist
 
 
 def get_newargs(fn: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -1526,23 +1549,12 @@ def get_newargs(fn: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
 	                {"a": 2}
 	"""
 
-	# if function has any **kwargs parameter that capture arbitrary keyword arguments
-	# Ref: https://docs.python.org/3/library/inspect.html#inspect.Parameter.kind
-	varkw_exist = False
-
-	signature = _cached_inspect_signature(fn)
-	fnargs = list(signature.parameters)
-
-	for param_name, parameter in signature.parameters.items():
-		if parameter.kind == inspect.Parameter.VAR_KEYWORD:
-			varkw_exist = True
-			fnargs.remove(param_name)
-			break
-
-	newargs = {}
-	for a in kwargs:
-		if (a in fnargs) or varkw_exist:
-			newargs[a] = kwargs.get(a)
+	parameters, variable_kwargs_exist = _get_cached_signature_params(fn)
+	newargs = (
+		kwargs.copy()
+		if variable_kwargs_exist
+		else {key: value for key, value in kwargs.items() if key in parameters}
+	)
 
 	# WARNING: This behaviour is now  part of business logic in places, never remove.
 	newargs.pop("ignore_permissions", None)

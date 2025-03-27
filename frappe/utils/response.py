@@ -8,7 +8,9 @@ import mimetypes
 import os
 import sys
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
+from re import Match
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -28,6 +30,8 @@ from frappe.utils import format_timedelta
 
 if TYPE_CHECKING:
 	from frappe.core.doctype.file.file import File
+
+DateOrTimeTypes = datetime.date | datetime.datetime | datetime.time
 
 
 def report_error(status_code):
@@ -210,17 +214,12 @@ def _make_logs_v2():
 
 def json_handler(obj):
 	"""serialize non-serializable data for json"""
-	from collections.abc import Iterable
-	from re import Match
 
-	if isinstance(obj, datetime.date | datetime.datetime | datetime.time):
+	if isinstance(obj, DateOrTimeTypes):
 		return str(obj)
 
 	elif isinstance(obj, datetime.timedelta):
 		return format_timedelta(obj)
-
-	elif isinstance(obj, decimal.Decimal):
-		return float(obj)
 
 	elif isinstance(obj, LocalProxy):
 		return str(obj)
@@ -230,6 +229,9 @@ def json_handler(obj):
 
 	elif isinstance(obj, Iterable):
 		return list(obj)
+
+	elif isinstance(obj, decimal.Decimal):
+		return float(obj)
 
 	elif isinstance(obj, Match):
 		return obj.string

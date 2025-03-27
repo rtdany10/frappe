@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 	from frappe.model.document import Document
 
 D = TypeVar("D", bound="Document")
+DatetimeTypes = datetime.date | datetime.datetime | datetime.time | datetime.timedelta
 
 
 max_positive_value = {"smallint": 2**15 - 1, "int": 2**31 - 1, "bigint": 2**63 - 1}
@@ -460,9 +461,7 @@ class BaseDocument:
 				):
 					value = None
 
-			if convert_dates_to_str and isinstance(
-				value, datetime.datetime | datetime.date | datetime.time | datetime.timedelta
-			):
+			if convert_dates_to_str and isinstance(value, DatetimeTypes):
 				value = str(value)
 
 			if ignore_nulls and not is_virtual_field and value is None:
