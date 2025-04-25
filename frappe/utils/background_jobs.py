@@ -183,6 +183,7 @@ def enqueue_doc(doctype, name=None, method=None, queue="default", timeout=300, n
 	)
 
 
+@frappe.whitelist()
 def run_doc_method(doctype, name, doc_method, **kwargs):
 	getattr(frappe.get_doc(doctype, name), doc_method)(**kwargs)
 
