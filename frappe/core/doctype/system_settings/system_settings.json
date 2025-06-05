@@ -96,6 +96,7 @@
   "advanced_tab",
   "prepared_report_section",
   "max_auto_email_report_per_user",
+  "max_report_rows",
   "background_workers",
   "enable_scheduler",
   "dormant_days",
@@ -278,7 +279,7 @@
   },
   {
    "default": "1",
-   "description": "If enabled, the password strength will be enforced based on the Minimum Password Score value. A value of 2 being medium strong and 4 being very strong.",
+   "description": "If enabled, the password strength will be enforced based on the Minimum Password Score value. A value of 1 being very weak and 4 being very strong.",
    "fieldname": "enable_password_policy",
    "fieldtype": "Check",
    "label": "Enable Password Policy"
@@ -289,7 +290,7 @@
    "fieldname": "minimum_password_score",
    "fieldtype": "Select",
    "label": "Minimum Password Score",
-   "options": "2\n3\n4"
+   "options": "1\n2\n3\n4"
   },
   {
    "fieldname": "brute_force_security",
@@ -699,12 +700,19 @@
    "fieldname": "hide_empty_read_only_fields",
    "fieldtype": "Check",
    "label": "Hide Empty Read-Only Fields"
+  },
+  {
+   "default": "100000",
+   "description": "This value specifies the max number of rows that can be rendered in report view. ",
+   "fieldname": "max_report_rows",
+   "fieldtype": "Int",
+   "label": "Max Report Rows"
   }
  ],
  "icon": "fa fa-cog",
  "issingle": 1,
  "links": [],
- "modified": "2025-02-21 20:06:55.499937",
+ "modified": "2025-05-19 14:17:40.748786",
  "modified_by": "Administrator",
  "module": "Core",
  "name": "System Settings",

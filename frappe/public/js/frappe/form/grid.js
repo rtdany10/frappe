@@ -87,6 +87,10 @@ export default class Grid {
 								data-action="delete_rows">
 								${__("Delete")}
 							</button>
+							<button type="button" class="btn btn-xs btn-secondary grid-remove-rows hidden"
+								data-action="duplicate_rows">
+								${__("Duplicate Row")}
+							</button>
 							<button type="button" class="btn btn-xs btn-danger grid-remove-all-rows hidden"
 								data-action="delete_all_rows">
 								${__("Delete All")}
@@ -232,6 +236,14 @@ export default class Grid {
 			row.select(checked);
 			row.row_check?.find(".grid-row-check").prop("checked", checked);
 		}
+	}
+
+	duplicate_rows() {
+		let selected_children = this.get_selected_children();
+		selected_children.forEach((doc) => {
+			this.add_new_row(null, null, false, doc, false);
+			this.check_range(doc.name, doc.name, false);
+		});
 	}
 
 	delete_rows() {
@@ -895,25 +907,20 @@ export default class Grid {
 	}
 
 	duplicate_row(d, copy_doc) {
-		const noCopyFields = new Set([
-			"creation",
-			"modified",
-			"modified_by",
-			"idx",
-			"owner",
-			"parent",
-			"doctype",
-			"name",
-			"parentfield",
-		]);
-
-		const docfields = frappe.get_meta(this.doctype).fields || [];
-		$.each(docfields, function (_index, df) {
-			if (cint(df.no_copy)) noCopyFields.add(df.fieldname);
-		});
-
 		$.each(copy_doc, function (key, value) {
-			if (!noCopyFields.has(key)) {
+			if (
+				![
+					"creation",
+					"modified",
+					"modified_by",
+					"idx",
+					"owner",
+					"parent",
+					"doctype",
+					"name",
+					"parentfield",
+				].includes(key)
+			) {
 				d[key] = value;
 			}
 		});
@@ -1117,6 +1124,9 @@ export default class Grid {
 							var data = frappe.utils.csv_to_array(
 								frappe.utils.get_decoded_string(file.dataurl)
 							);
+							if (cint(data.length) - 7 > 5000) {
+								frappe.throw(__("Cannot import table with more than 5000 rows."));
+							}
 							// row #2 contains fieldnames;
 							var fieldnames = data[2];
 							me.frm.clear_table(me.df.fieldname);

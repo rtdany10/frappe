@@ -1,10 +1,9 @@
 # Copyright (c) 2021, Frappe Technologies and contributors
 # License: MIT. See LICENSE
 
-import contextlib
+import hashlib
 import json
 from datetime import datetime, timedelta
-from random import randint
 
 import click
 from croniter import CroniterBadCronError, croniter
@@ -31,8 +30,10 @@ class ScheduledJobType(Document):
 			"All",
 			"Hourly",
 			"Hourly Long",
+			"Hourly Maintenance",
 			"Daily",
 			"Daily Long",
+			"Daily Maintenance",
 			"Weekly",
 			"Weekly Long",
 			"Monthly",
@@ -43,7 +44,6 @@ class ScheduledJobType(Document):
 		]
 		last_execution: DF.Datetime | None
 		method: DF.Data
-		next_execution: DF.Datetime | None
 		scheduler_event: DF.Link | None
 		server_script: DF.Link | None
 		stopped: DF.Check
@@ -102,6 +102,11 @@ class ScheduledJobType(Document):
 		return self.get_next_execution()
 
 	def get_next_execution(self):
+		# Maintenance jobs run at random time, the time is specific to the site though.
+		# This is done to avoid scheduling all maintenance task on all sites at the same time in
+		# multitenant deployments.
+		maintenance_offset = int(hashlib.sha1(frappe.local.site.encode()).hexdigest(), 16) % 60
+
 		CRON_MAP = {
 			"Yearly": "0 0 1 1 *",
 			"Annual": "0 0 1 1 *",
@@ -111,8 +116,10 @@ class ScheduledJobType(Document):
 			"Weekly Long": "0 0 * * 0",
 			"Daily": "0 0 * * *",
 			"Daily Long": "0 0 * * *",
+			"Daily Maintenance": "0 0 * * *",
 			"Hourly": "0 * * * *",
 			"Hourly Long": "0 * * * *",
+			"Hourly Maintenance": "0 * * * *",
 			"All": f"*/{(frappe.get_conf().scheduler_interval or 240) // 60} * * * *",
 		}
 
@@ -124,12 +131,11 @@ class ScheduledJobType(Document):
 		# immediately, even when it's meant to be daily.
 		# A dynamic fallback like current time might miss the scheduler interval and job will never start.
 		last_execution = get_datetime(self.last_execution or self.creation)
-		next_execution = croniter(self.cron_format, last_execution).get_next(datetime)
 
-		jitter = 0
-		if "Long" in self.frequency:
-			jitter = randint(1, 600)
-		return next_execution + timedelta(seconds=jitter)
+		next_execution = croniter(self.cron_format, last_execution).get_next(datetime)
+		if self.frequency in ("Hourly Maintenance", "Daily Maintenance"):
+			next_execution += timedelta(minutes=maintenance_offset)
+		return croniter(self.cron_format, last_execution).get_next(datetime)
 
 	def execute(self):
 		if frappe.job:
@@ -176,7 +182,7 @@ class ScheduledJobType(Document):
 		frappe.db.commit()
 
 	def get_queue_name(self):
-		return "long" if ("Long" in self.frequency) else "default"
+		return "long" if ("Long" in self.frequency or "Maintenance" in self.frequency) else "default"
 
 	def on_trash(self):
 		frappe.db.delete("Scheduled Job Log", {"scheduled_job_type": self.name})
@@ -188,6 +194,15 @@ def execute_event(doc: str):
 	doc = json.loads(doc)
 	frappe.get_doc("Scheduled Job Type", doc.get("name")).enqueue(force=True)
 	return doc
+
+
+@frappe.whitelist()
+def skip_next_execution(doc: str):
+	frappe.only_for("System Manager")
+	doc = json.loads(doc)
+	doc: ScheduledJobType = frappe.get_doc("Scheduled Job Type", doc.get("name"))
+	doc.last_execution = doc.next_execution
+	return doc.save()
 
 
 def run_scheduled_job(scheduled_job_type: str, job_type: str | None = None):

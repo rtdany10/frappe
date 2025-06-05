@@ -69,9 +69,10 @@ if TYPE_CHECKING:  # pragma: no cover
 	from frappe.database.mariadb.database import MariaDBDatabase as PyMariaDBDatabase
 	from frappe.database.mariadb.mysqlclient import MariaDBDatabase
 	from frappe.database.postgres.database import PostgresDatabase
+	from frappe.database.sqlite.database import SQLiteDatabase
 	from frappe.email.doctype.email_queue.email_queue import EmailQueue
 	from frappe.model.document import Document
-	from frappe.query_builder.builder import MariaDB, Postgres
+	from frappe.query_builder.builder import MariaDB, Postgres, SQLite
 	from frappe.types.lazytranslatedstring import _LazyTranslate
 	from frappe.utils.redis_wrapper import ClientCache, RedisWrapper
 
@@ -161,8 +162,10 @@ ResponseDict: TypeAlias = _dict[str, Any]  # type: ignore[no-any-explicit]
 FlagsDict: TypeAlias = _dict[str, Any]  # type: ignore[no-any-explicit]
 FormDict: TypeAlias = _dict[str, str]
 
-db: LocalProxy[Union["PyMariaDBDatabase", "MariaDBDatabase", "PostgresDatabase"]] = local("db")
-qb: LocalProxy[Union["MariaDB", "Postgres"]] = local("qb")
+db: LocalProxy[Union["PyMariaDBDatabase", "MariaDBDatabase", "PostgresDatabase", "SQLiteDatabase"]] = local(
+	"db"
+)
+qb: LocalProxy[Union["MariaDB", "Postgres", "SQLite"]] = local("qb")
 conf: LocalProxy[ConfType] = local("conf")
 form_dict: LocalProxy[FormDict] = local("form_dict")
 form = form_dict
@@ -182,7 +185,7 @@ lang: LocalProxy[str] = local("lang")
 if TYPE_CHECKING:  # pragma: no cover
 	# trick because some type checkers fail to follow "RedisWrapper", etc (written as string literal)
 	# trough a generic wrapper; seems to be a bug
-	db: PyMariaDBDatabase | MariaDBDatabase | PostgresDatabase
+	db: PyMariaDBDatabase | MariaDBDatabase | PostgresDatabase | SQLiteDatabase
 	qb: MariaDB | Postgres
 	conf: ConfType
 	form_dict: FormDict
@@ -304,9 +307,11 @@ def connect(site: str | None = None, db_name: str | None = None, set_admin_as_us
 	db_name_ = conf.db_name or db_name
 	db_password = conf.db_password
 
-	assert db_user, "site must be fully initialized, db_user missing"
 	assert db_name_, "site must be fully initialized, db_name missing"
-	assert db_password, "site must be fully initialized, db_password missing"
+
+	if frappe.conf.db_type in ("mariadb", "postgres"):
+		assert db_user, "site must be fully initialized, db_user missing"
+		assert db_password, "site must be fully initialized, db_password missing"
 
 	local.db = get_db(
 		socket=conf.db_socket,
@@ -348,6 +353,9 @@ def connect_replica() -> bool:
 	local.primary_db = local.db
 	local.db = local.replica_db
 
+	if hasattr(frappe.local, "_recorder"):
+		frappe.local._recorder._patch_sql(local.db)
+
 	return True
 
 
@@ -387,13 +395,6 @@ def setup_redis_cache_connection():
 		if not cache:
 			cache = setup_cache()
 			client_cache = ClientCache()
-
-
-def get_traceback(with_context: bool = False) -> str:
-	"""Return error traceback."""
-	from frappe.utils import get_traceback
-
-	return get_traceback(with_context=with_context)
 
 
 def errprint(msg: str) -> None:
@@ -514,6 +515,7 @@ def sendmail(
 	print_letterhead=False,
 	with_container=False,
 	email_read_tracker_url=None,
+	x_priority: Literal[1, 3, 5] = 3,
 ) -> Optional["EmailQueue"]:
 	"""Send email using user's default **Email Account** or global default **Email Account**.
 
@@ -541,6 +543,7 @@ def sendmail(
 	:param args: Arguments for rendering the template
 	:param header: Append header in email
 	:param with_container: Wraps email inside a styled container
+	:param x_priority: 1 = HIGHEST, 3 = NORMAL, 5 = LOWEST
 	"""
 
 	if recipients is None:
@@ -596,6 +599,7 @@ def sendmail(
 		print_letterhead=print_letterhead,
 		with_container=with_container,
 		email_read_tracker_url=email_read_tracker_url,
+		x_priority=x_priority,
 	)
 
 	# build email queue and send the email if send_now is True.
@@ -662,7 +666,7 @@ def is_whitelisted(method):
 
 	is_guest = session["user"] == "Guest"
 	if method not in whitelisted or (is_guest and method not in guest_methods):
-		summary = _("You are not permitted to access this resource.")
+		summary = _("You are not permitted to access this resource. Login to access")
 		detail = _("Function {0} is not whitelisted.").format(bold(f"{method.__module__}.{method.__name__}"))
 		msg = f"<details><summary>{summary}</summary>{detail}</details>"
 		throw(msg, PermissionError, title=_("Method Not Allowed"))
@@ -973,6 +977,8 @@ def get_document_cache_key(doctype: str, name: str):
 
 
 def clear_document_cache(doctype: str, name: str | None = None) -> None:
+	frappe.db.value_cache.pop(doctype, None)
+
 	def clear_in_redis():
 		if name is not None:
 			cache.delete_value(get_document_cache_key(doctype, name))
@@ -1011,62 +1017,6 @@ def get_cached_value(
 	return values
 
 
-_SingleDocument: TypeAlias = "Document"
-_NewDocument: TypeAlias = "Document"
-
-
-@overload
-def get_doc(document: "Document", /) -> "Document":
-	pass
-
-
-@overload
-def get_doc(doctype: str, /) -> _SingleDocument:
-	"""Retrieve Single DocType from DB, doctype must be positional argument."""
-	pass
-
-
-@overload
-def get_doc(doctype: str, name: str, /, *, for_update: bool | None = None) -> "Document":
-	"""Retrieve DocType from DB, doctype and name must be positional argument."""
-	pass
-
-
-@overload
-def get_doc(**kwargs: dict) -> "_NewDocument":
-	"""Initialize document from kwargs.
-	Not recommended. Use `frappe.new_doc` instead."""
-	pass
-
-
-@overload
-def get_doc(documentdict: dict) -> "_NewDocument":
-	"""Create document from dict.
-	Not recommended. Use `frappe.new_doc` instead."""
-	pass
-
-
-def get_doc(*args: Any, **kwargs: Any) -> "Document":
-	"""Return a `frappe.model.document.Document` object of the given type and name.
-
-	:param arg1: DocType name as string **or** document JSON.
-	:param arg2: [optional] Document name as string.
-
-	Examples:
-
-	        # insert a new document
-	        todo = frappe.get_doc({"doctype":"ToDo", "description": "test"})
-	        todo.insert()
-
-	        # open an existing document
-	        todo = frappe.get_doc("ToDo", "TD0001")
-
-	"""
-	import frappe.model.document
-
-	return frappe.model.document.get_doc(*args, **kwargs)
-
-
 def get_last_doc(
 	doctype,
 	filters: FilterSignature | None = None,
@@ -1085,13 +1035,6 @@ def get_last_doc(
 def get_single(doctype):
 	"""Return a `frappe.model.document.Document` object of the given Single doctype."""
 	return get_doc(doctype, doctype)
-
-
-def get_meta(doctype, cached=True):
-	"""Get `frappe.model.meta.Meta` instance of given doctype name."""
-	import frappe.model.meta
-
-	return frappe.model.meta.get_meta(doctype, cached=cached)
 
 
 def get_meta_module(doctype):
@@ -1833,7 +1776,7 @@ def get_value(*args, **kwargs):
 	:param as_dict: Return values as dict.
 	:param debug: Print query in error log.
 	"""
-	return db.get_value(*args, **kwargs)
+	return local.db.get_value(*args, **kwargs)
 
 
 def as_json(obj: dict | list, indent=1, separators=None, ensure_ascii=True) -> str:
@@ -1870,26 +1813,6 @@ def are_emails_muted():
 
 
 from frappe.deprecation_dumpster import frappe_get_test_records as get_test_records
-
-
-def format_value(*args, **kwargs):
-	"""Format value with given field properties.
-
-	:param value: Value to be formatted.
-	:param df: (Optional) DocField object with properties `fieldtype`, `options` etc."""
-	import frappe.utils.formatters
-
-	return frappe.utils.formatters.format_value(*args, **kwargs)
-
-
-def format(*args, **kwargs):
-	"""Format value with given field properties.
-
-	:param value: Value to be formatted.
-	:param df: (Optional) DocField object with properties `fieldtype`, `options` etc."""
-	import frappe.utils.formatters
-
-	return frappe.utils.formatters.format_value(*args, **kwargs)
 
 
 def attach_print(
@@ -1945,45 +1868,12 @@ def attach_print(
 	return {"fname": file_name, "fcontent": content}
 
 
-def enqueue(*args, **kwargs):
-	"""
-	Enqueue method to be executed using a background worker
-
-	:param method: method string or method object
-	:param queue: (optional) should be either long, default or short
-	:param timeout: (optional) should be set according to the functions
-	:param event: this is passed to enable clearing of jobs from queues
-	:param is_async: (optional) if is_async=False, the method is executed immediately, else via a worker
-	:param job_name: (optional) can be used to name an enqueue call, which can be used to prevent duplicate calls
-	:param kwargs: keyword arguments to be passed to the method
-	"""
-	import frappe.utils.background_jobs
-
-	return frappe.utils.background_jobs.enqueue(*args, **kwargs)
-
-
 def task(**task_kwargs):
 	def decorator_task(f):
 		f.enqueue = lambda **fun_kwargs: enqueue(f, **task_kwargs, **fun_kwargs)
 		return f
 
 	return decorator_task
-
-
-def enqueue_doc(*args, **kwargs):
-	"""
-	Enqueue method to be executed using a background worker
-
-	:param doctype: DocType of the document on which you want to run the event
-	:param name: Name of the document on which you want to run the event
-	:param method: method string or method object
-	:param queue: (optional) should be either long, default or short
-	:param timeout: (optional) should be set according to the functions
-	:param kwargs: keyword arguments to be passed to the method
-	"""
-	import frappe.utils.background_jobs
-
-	return frappe.utils.background_jobs.enqueue_doc(*args, **kwargs)
 
 
 def get_doctype_app(doctype):
@@ -2014,11 +1904,15 @@ def logger(
 	)
 
 
-def get_desk_link(doctype, name):
+def get_desk_link(doctype, name, show_title_with_name=False):
 	meta = get_meta(doctype)
 	title = get_value(doctype, name, meta.get_title_field())
 
-	html = '<a href="/app/Form/{doctype}/{name}" style="font-weight: bold;">{doctype_local} {title_local}</a>'
+	if show_title_with_name and name != title:
+		html = '<a href="/app/Form/{doctype}/{name}" style="font-weight: bold;">{doctype_local} {name}: {title_local}</a>'
+	else:
+		html = '<a href="/app/Form/{doctype}/{name}" style="font-weight: bold;">{doctype_local} {title_local}</a>'
+
 	return html.format(doctype=doctype, name=name, doctype_local=_(doctype), title_local=_(title))
 
 
@@ -2037,6 +1931,18 @@ def get_active_domains():
 	from frappe.core.doctype.domain_settings.domain_settings import get_active_domains
 
 	return get_active_domains()
+
+
+@request_cache
+def is_setup_complete():
+	is_setup_complete = False
+	if not frappe.db.table_exists("Installed Application"):
+		return is_setup_complete
+
+	if all(frappe.get_all("Installed Application", {"has_setup_wizard": 1}, pluck="is_setup_complete")):
+		is_setup_complete = True
+
+	return is_setup_complete
 
 
 @whitelist(allow_guest=True)
@@ -2075,10 +1981,17 @@ import frappe._optimizations
 from frappe.cache_manager import clear_cache, reset_metadata_version
 from frappe.config import get_common_site_config, get_conf, get_site_config
 from frappe.core.doctype.system_settings.system_settings import get_system_settings
+from frappe.model.document import get_doc
+from frappe.model.meta import get_meta
 from frappe.realtime import publish_progress, publish_realtime
-from frappe.utils import mock, parse_json, safe_eval
+from frappe.utils import get_traceback, mock, parse_json, safe_eval
+from frappe.utils.background_jobs import enqueue, enqueue_doc
 from frappe.utils.error import log_error
+from frappe.utils.formatters import format_value
 from frappe.utils.print_utils import get_print
+
+# for backwards compatibility
+format = format_value
 
 frappe._optimizations.optimize_all()
 frappe._optimizations.register_fault_handler()

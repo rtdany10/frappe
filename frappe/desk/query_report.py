@@ -90,7 +90,7 @@ def generate_report_result(
 
 	result = normalize_result(result, columns)
 
-	if report.custom_columns:
+	if report.get("custom_columns"):
 		# saved columns (with custom columns / with different column order)
 		columns = report.custom_columns
 
@@ -211,7 +211,7 @@ def run(
 
 	result = None
 
-	if sbool(are_default_filters) and report.custom_filters:
+	if sbool(are_default_filters) and report.get("custom_filters"):
 		filters = report.custom_filters
 
 	try:
@@ -233,7 +233,7 @@ def run(
 
 	result["add_total_row"] = report.add_total_row and not result.get("skip_total_row", False)
 
-	if sbool(are_default_filters) and report.custom_filters:
+	if sbool(are_default_filters) and report.get("custom_filters"):
 		result["custom_filters"] = report.custom_filters
 
 	return result
@@ -318,7 +318,6 @@ def export_query():
 	csv_params = pop_csv_params(form_params)
 	clean_params(form_params)
 	parse_json(form_params)
-
 	report_name = form_params.report_name
 	frappe.permissions.can_export(
 		frappe.get_cached_value("Report", report_name, "ref_doctype"),
@@ -359,16 +358,24 @@ def export_query():
 		file_extension = "xlsx"
 		content = make_xlsx(xlsx_data, "Query Report", column_widths=column_widths).getvalue()
 
-	for value in (data.filters or {}).values():
-		if len(report_name) > 200:
-			break
+	if include_filters:
+		for value in (data.filters or {}).values():
+			suffix = ""
+			if isinstance(value, list):
+				suffix = "_" + ",".join(value)
+			elif isinstance(value, str) and value not in {"Yes", "No"}:
+				suffix = f"_{value}"
 
-		if isinstance(value, list) and value:
-			report_name += "_" + ",".join(value)
-		elif isinstance(value, str) and value not in {"Yes", "No"}:
-			report_name += f"_{value}"
+			if valid_report_name(report_name, suffix):
+				report_name += suffix
 
 	provide_binary_file(report_name, file_extension, content)
+
+
+def valid_report_name(report_name, suffix):
+	if len(report_name) + len(suffix) < 200:
+		return True
+	return False
 
 
 def format_fields(data: frappe._dict) -> None:
@@ -701,6 +708,13 @@ def has_match(
 
 				# each doctype could have multiple conflicting user permission doctypes, hence using OR
 				# so that even if one of the sets allows a match, it is true
+
+				if match:
+					if not frappe.has_permission(
+						doctype=ref_doctype, ptype="read", throw=False, ignore_share_permissions=True
+					):
+						match = False
+
 				matched_for_doctype = matched_for_doctype or match
 
 				if matched_for_doctype:

@@ -24,9 +24,11 @@
 		border-top-left-radius: var(--border-radius-md);
 		border-top-right-radius: var(--border-radius-md);
 
-		.row-check,
+		.row-check {
+			border-top-left-radius: var(--border-radius-md);
+		}
 		.row .col:last-child {
-			border-radius: var(--border-radius-md);
+			border-top-right-radius: var(--border-radius-md);
 		}
 	}
 
@@ -412,11 +414,6 @@
 	background-color: var(--fg-color);
 
 	@include transition(0.2s);
-	// REDESIGN TODO: Fix border bottom for last item
-	&:last-child {
-		border-bottom-left-radius: var(--border-radius);
-		border-bottom-right-radius: var(--border-radius);
-	}
 
 	td {
 		vertical-align: top;
@@ -507,7 +504,7 @@
 
 .grid-row-open .form-in-grid {
 	opacity: 1;
-	height: 100%;
+	height: auto;
 	overflow: auto;
 	margin: auto;
 	padding: var(--padding-sm) var(--padding-md);
@@ -516,6 +513,11 @@
 	top: 5%;
 	left: 50%;
 	transform: translate(-50%, 0%);
+	width: 100%;
+	.grid-form-body {
+		max-height: 80vh;
+		overflow: scroll;
+	}
 }
 
 .grid-form-heading {

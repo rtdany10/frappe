@@ -29,6 +29,15 @@ export default class ShortcutWidget extends Widget {
 		this.widget.click((e) => {
 			if (this.in_customize_mode) return;
 
+			if (this.type == "DocType" && this.doc_view == "New") {
+				frappe.ui.form.make_quick_entry(
+					this.link_to,
+					// Callback to ensure no redirection after insert
+					() => {}
+				);
+				return;
+			}
+
 			let route = frappe.utils.generate_route({
 				route: this.route,
 				name: this.link_to,
@@ -37,6 +46,7 @@ export default class ShortcutWidget extends Widget {
 				doctype: this.ref_doctype,
 				doc_view: this.doc_view,
 				kanban_board: this.kanban_board,
+				report_ref_doctype: this.report_ref_doctype,
 			});
 
 			let filters = frappe.utils.get_filter_from_json(this.stats_filter);
